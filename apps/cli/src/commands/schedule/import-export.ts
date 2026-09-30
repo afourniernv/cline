@@ -111,7 +111,7 @@ export function registerScheduleExportCommand(
 				const yaml = await import("yaml");
 				io.writeln(yaml.stringify(result));
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -211,7 +211,7 @@ export function registerScheduleImportCommand(
 				}
 				emitJsonOrText(!!opts.json, io, created);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -319,7 +319,7 @@ export function registerScheduleUpdateCommand(
 				}
 				emitJsonOrText(!!opts.json, io, updated);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);

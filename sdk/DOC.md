@@ -1,4 +1,109 @@
 
+## Experimental NeMo Relay observability
+
+Local `@cline/core` execution hosts can load the optional `nemo-relay-node`
+runtime in the process that runs model and tool callbacks. Relay uses its normal
+user and system `plugins.toml` discovery. Set
+`CLINE_NEMO_RELAY_PLUGINS_TOML=/absolute/path/plugins.toml` when a host must use
+an explicit file; Relay uses that file in place of the user file and still
+applies the system-managed file above it.
+
+SDK hosts opt in by installing `nemo-relay-node@0.9.3` alongside `@cline/core`.
+Cline's packaged CLI, VS Code extension, Desktop app, and remote helpers do not
+yet stage the platform-specific Relay library; those distributions treat it as
+unavailable until their native packaging paths are qualified.
+
+The integration is observation-only. It records one `cline.run` agent scope per
+admitted `SessionRuntime` run, Cline-normalized model activity, and tool
+callbacks that have already passed Cline policy and human approval. Copied
+event payloads are bounded before Relay receives them. Relay sanitizers can
+change those copies, but never the request sent to a model or the arguments and
+result seen by a tool. Configurations that register LLM or tool request
+intercepts, conditional execution guardrails, execution intercepts, or
+stream-execution intercepts fail the run instead of being partially enforced
+or silently bypassed. Relay event and payload sanitizers remain supported
+because they operate only on the copied observability data.
+
+Denied or skipped tool attempts are not counted as executions, and the observed
+tool result is the callback result before any later Cline `afterTool` rewrite.
+Model-call metrics count Cline-visible `AgentModel.stream` invocations, not
+provider-internal retries or fallbacks. Copied payloads are not automatically
+PII-safe; configure a Relay sanitizer before exporting sensitive content.
+
+The initial metric set is intentionally small and uses bounded labels:
+
+- `cline.agent.runs` and `cline.agent.run.duration`
+- `cline.agent.model.calls`, `cline.agent.model.duration`, and
+  `cline.agent.model.tokens`
+- `cline.agent.tool.executions`, `cline.agent.tool.duration`, and
+  `cline.agent.active_tools`
+- `cline.agent.observation.omissions`
+
+`cline.agent.active_tools` counts Cline tool callbacks currently executing
+after approval. It is not a count of active sandboxes, provider-owned tools, or
+work inside an MCP server. Provider IDs, model IDs, tool names, prompts, paths,
+session IDs, arguments, results, and error text are not metric labels. A stable
+validated session ID is available only as `cline.session_id` trace metadata for
+correlation. The bounded working directory is recorded as `data.cwd` on the
+`cline.run` start event so operators can apply the same workspace filters they
+use for other Relay harness integrations.
+
+The model boundary is Cline's normalized `AgentModelRequest`, not a
+provider-native wire request. Relay therefore records it as `cline.agent_model`
+with partial coverage and does not claim an OpenAI, Anthropic, Gemini, or other
+provider codec. Relay 0.9.3's manual LLM completion API also reports standard
+OpenTelemetry status as successful; use the bounded `cline.outcome` metadata
+and Cline model metrics for failures until Relay exposes a manual error-ending
+surface.
+
+The plugin host is shared and reference-counted within each execution process.
+Independent runs receive isolated scope stacks, while explicitly marked,
+in-context subagent runs inherit trace parentage. Queued teammate runs remain
+independent roots rather than inheriting whichever run happened to dispatch
+them. The final owner stops accepting observed runs and
+allows up to five seconds for each shutdown stage: accepted-run drain,
+subscriber flush, and activation close. An absent or platform-unavailable
+optional Relay package is fail-open. Once the package loads, initialization and
+configuration-inspection failures fail closed so user- or system-managed policy
+cannot be silently bypassed. Cline also refuses the run when another process
+host already owns Relay or the active configuration contains middleware this
+observation-only integration cannot enforce. Hosts must await
+`dispose()`/`close()` to give Relay a final drain window; an abrupt process exit
+cannot guarantee delivery.
+
+Each initial run and each later continuation receives a separate `cline.run`
+scope. They can be joined using the bounded `cline.session_id` metadata, but
+this first version does not keep a long-lived `cline.session` parent scope open
+between turns. Explicitly marked, in-context subagent runs can still inherit the
+active trace.
+
+Example file exporter configuration:
+
+```toml
+version = 1
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "./cline-relay"
+filename = "events.jsonl"
+mode = "append"
+```
+
+Relay 0.9.3 declares Node 24 support and does not publish a macOS x64 Node
+artifact. Cline's Node 22 and native application packaging paths therefore need
+qualification before this experimental integration can be treated as supported
+across all Cline distributions.
+
 ## Shared agent review UI
 
 `@cline/ui` exports presentation-only components for showing a session's changed

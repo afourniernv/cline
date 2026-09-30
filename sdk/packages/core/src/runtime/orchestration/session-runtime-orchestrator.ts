@@ -56,6 +56,14 @@ import {
 	createAgentModelFromConfig,
 	resolveKnownModelsFromConfig,
 } from "../../services/llms/handler-factory";
+import type {
+	NemoRelayRunInstrumentation,
+	NemoRelayRunObserver,
+} from "../../services/nemo-relay/runtime";
+import {
+	borrowNemoRelayRuntime,
+	resolveNemoRelayRunContext,
+} from "../../services/nemo-relay/runtime";
 import {
 	captureAuthRunRetry,
 	captureMistakeLimitReached,
@@ -294,6 +302,10 @@ export type SessionEventListener = (event: AgentEvent) => void;
 export interface SessionRuntimeOrchestratorDeps {
 	readonly logger?: BasicLogger;
 	readonly telemetry?: ITelemetryService;
+	/** Optional process-owned NeMo Relay observer supplied by the execution host. */
+	readonly nemoRelay?: NemoRelayRunObserver;
+	/** Host-resolved execution context when the session has transport provenance. */
+	readonly nemoRelayRunContext?: import("../../services/nemo-relay/runtime").NemoRelayRunContext;
 	/**
 	 * Test hook: override the `AgentRuntime` factory. Production
 	 * callers leave this undefined and get the real `createAgentRuntime`.
@@ -357,6 +369,8 @@ export class SessionRuntime {
 	private readonly createAgentRuntimeImpl: (
 		config: Parameters<typeof createAgentRuntime>[0],
 	) => AgentRuntime;
+	private readonly nemoRelay: NemoRelayRunObserver;
+	private readonly nemoRelayRunContext: import("../../services/nemo-relay/runtime").NemoRelayRunContext;
 
 	/** Stable run id for the active run. */
 	private activeRunId: string | null = null;
@@ -419,6 +433,9 @@ export class SessionRuntime {
 		this.telemetry = deps.telemetry ?? config.telemetry;
 		this.createAgentRuntimeImpl =
 			deps.createAgentRuntimeImpl ?? createAgentRuntime;
+		this.nemoRelay = deps.nemoRelay ?? borrowNemoRelayRuntime(this.logger);
+		this.nemoRelayRunContext =
+			deps.nemoRelayRunContext ?? resolveNemoRelayRunContext(this.config);
 
 		this.conversation = new ConversationStore(config.initialMessages);
 		this.messageBuilder = new MessageBuilder(getMessageBuilderOptionsFromEnv());
@@ -766,7 +783,13 @@ export class SessionRuntime {
 		isContinue: boolean;
 	}): Promise<AgentResult> {
 		let activePromise!: Promise<AgentResult>;
-		activePromise = this.executeRunWithAuthRetry(input)
+		const execute = (instrumentation?: NemoRelayRunInstrumentation) =>
+			this.executeRunWithAuthRetry(input, instrumentation);
+		const execution = this.nemoRelay.observeRun(
+			{ ...this.nemoRelayRunContext },
+			execute,
+		);
+		activePromise = execution
 			.then(
 				(result) => {
 					if (result.finishReason === "error") {
@@ -837,13 +860,16 @@ export class SessionRuntime {
 	 * trail is already persisted to the conversation store, so the retry
 	 * continues from where the stream died instead of replaying the run.
 	 */
-	private async executeRunWithAuthRetry(input: {
-		userMessage?: string;
-		userImages?: string[];
-		userFiles?: string[];
-		isContinue: boolean;
-	}): Promise<AgentResult> {
-		const result = await this.executeRunInternal(input);
+	private async executeRunWithAuthRetry(
+		input: {
+			userMessage?: string;
+			userImages?: string[];
+			userFiles?: string[];
+			isContinue: boolean;
+		},
+		instrumentation?: NemoRelayRunInstrumentation,
+	): Promise<AgentResult> {
+		const result = await this.executeRunInternal(input, instrumentation);
 		if (
 			result.finishReason !== "error" ||
 			!this.config.onAuthError ||
@@ -855,19 +881,25 @@ export class SessionRuntime {
 		if (!refreshed) {
 			return result;
 		}
-		const retryResult = await this.executeRunInternal({ isContinue: true });
+		const retryResult = await this.executeRunInternal(
+			{ isContinue: true },
+			instrumentation,
+		);
 		captureAuthRunRetry(this.telemetry, this.config.providerId, {
 			recovered: retryResult.finishReason !== "error",
 		});
 		return retryResult;
 	}
 
-	private async executeRunInternal(input: {
-		userMessage?: string;
-		userImages?: string[];
-		userFiles?: string[];
-		isContinue: boolean;
-	}): Promise<AgentResult> {
+	private async executeRunInternal(
+		input: {
+			userMessage?: string;
+			userImages?: string[];
+			userFiles?: string[];
+			isContinue: boolean;
+		},
+		instrumentation?: NemoRelayRunInstrumentation,
+	): Promise<AgentResult> {
 		if (this.shutdownCalled) {
 			throw new Error(
 				`SessionRuntime.run called after shutdown (agentId=${this.agentId})`,
@@ -923,11 +955,18 @@ export class SessionRuntime {
 		}
 
 		// Build the AgentRuntime for this turn.
-		const agentModel = createAgentModelFromConfig(
+		const baseAgentModel = createAgentModelFromConfig(
 			this.config,
 			this.logger,
 			this.telemetry,
 		);
+		const agentModel = instrumentation
+			? instrumentation.wrapModel(
+					baseAgentModel,
+					this.config.providerId,
+					this.config.modelId,
+				)
+			: baseAgentModel;
 		// Merge extension-contributed tools with the config-declared
 		// tools for this turn. Extensions register tools via
 		// `api.registerTool` during `setup()` — parity with legacy
@@ -963,7 +1002,9 @@ export class SessionRuntime {
 			Array.from(mergedToolsByName.values()),
 			this.config.toolPolicies,
 		);
-		const tools = toolCallingDisabled ? [] : availableTools;
+		const tools = toolCallingDisabled
+			? []
+			: (instrumentation?.wrapTools(availableTools) ?? availableTools);
 		const systemPrompt = await this.composeSystemPrompt(
 			new Set(tools.map((tool) => tool.name)),
 		);

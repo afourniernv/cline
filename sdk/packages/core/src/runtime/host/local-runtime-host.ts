@@ -31,6 +31,12 @@ import type { HookEventPayload } from "../../hooks";
 import { buildTelemetryAgentIdentity } from "../../services/agent-events";
 import { resolveWorkspacePath } from "../../services/config";
 import { prepareLocalRuntimeBootstrap } from "../../services/local-runtime-bootstrap";
+import {
+	acquireNemoRelayRuntime,
+	type NemoRelayRunContext,
+	type NemoRelayRuntimeOwner,
+	resolveNemoRelayRunContext,
+} from "../../services/nemo-relay/runtime";
 import { nowIso } from "../../services/session-artifacts";
 import {
 	toSessionRecord,
@@ -263,7 +269,15 @@ export class LocalRuntimeHost implements RuntimeHost {
 	public readonly pendingPrompts: PendingPromptsServiceApi;
 	private readonly sessionService: SessionBackend;
 	private readonly runtimeBuilder: RuntimeBuilder;
-	private readonly createAgentInstance: (config: AgentConfig) => SessionRuntime;
+	private readonly createAgentInstance: (
+		config: AgentConfig,
+		nemoRelayRunContext: NemoRelayRunContext,
+	) => SessionRuntime;
+	private readonly nemoRelayRunContexts = new WeakMap<
+		SessionRuntime,
+		NemoRelayRunContext
+	>();
+	private nemoRelay?: NemoRelayRuntimeOwner;
 	private readonly toolExecutors?: Partial<ToolExecutors>;
 	private readonly defaultCapabilities?: RuntimeCapabilities;
 	private readonly defaultToolPolicies?: AgentConfig["toolPolicies"];
@@ -296,8 +310,21 @@ export class LocalRuntimeHost implements RuntimeHost {
 		this.distinctId = distinctId;
 		this.sessionService = options.sessionService;
 		this.runtimeBuilder = options.runtimeBuilder ?? new DefaultRuntimeBuilder();
-		this.createAgentInstance =
-			options.createAgent ?? ((config) => new SessionRuntime(config));
+		const createAgent = options.createAgent;
+		this.createAgentInstance = createAgent
+			? (config) => {
+					this.nemoRelay ??= acquireNemoRelayRuntime(options.logger);
+					return createAgent(config);
+				}
+			: (config, nemoRelayRunContext) => {
+					this.nemoRelay ??= acquireNemoRelayRuntime(options.logger);
+					const agent = new SessionRuntime(config, {
+						nemoRelay: this.nemoRelay,
+						nemoRelayRunContext,
+					});
+					this.nemoRelayRunContexts.set(agent, nemoRelayRunContext);
+					return agent;
+				};
 		this.defaultCapabilities = normalizeRuntimeCapabilities(
 			options.capabilities,
 		);
@@ -867,7 +894,15 @@ export class LocalRuntimeHost implements RuntimeHost {
 				}
 			},
 		};
-		const agent = this.createAgentInstance(agentConfig);
+		const agent = this.createAgentInstance(
+			agentConfig,
+			resolveNemoRelayRunContext(agentConfig, {
+				source,
+				originMode: sessionOrigin?.mode,
+				mode: configWithProvider.mode ?? "act",
+				cwd: configWithProvider.cwd,
+			}),
+		);
 		if (agentConfig.onEvent) {
 			agent.subscribeEvents(agentConfig.onEvent);
 		}
@@ -1238,29 +1273,34 @@ export class LocalRuntimeHost implements RuntimeHost {
 	}
 
 	async dispose(reason = "session_manager_dispose"): Promise<void> {
-		const sessions = [...this.sessions.values()];
-		if (sessions.length === 0) return;
-		await Promise.allSettled(
-			sessions.map((session) =>
-				session.interactive && !isNonTerminalSessionStatus(session.status)
-					? this.releaseSessionRuntime(session, reason)
-					: session.interactive && session.agent.canStartRun()
-						? this.shutdownSession(session, {
-								status: this.resolveInteractiveStopStatus(session),
-								exitCode: this.resolveInteractiveStopExitCode(session),
-								shutdownReason: reason,
-								endReason: "disposed",
-							})
-						: this.shutdownSession(session, {
-								status: "cancelled",
-								exitCode: 0,
-								shutdownReason: reason,
-								endReason: "disposed",
-							}),
-			),
-		);
-		this.usageBySession.clear();
-		this.aggregateUsageBySession.clear();
+		try {
+			const sessions = [...this.sessions.values()];
+			if (sessions.length > 0) {
+				await Promise.allSettled(
+					sessions.map((session) =>
+						session.interactive && !isNonTerminalSessionStatus(session.status)
+							? this.releaseSessionRuntime(session, reason)
+							: session.interactive && session.agent.canStartRun()
+								? this.shutdownSession(session, {
+										status: this.resolveInteractiveStopStatus(session),
+										exitCode: this.resolveInteractiveStopExitCode(session),
+										shutdownReason: reason,
+										endReason: "disposed",
+									})
+								: this.shutdownSession(session, {
+										status: "cancelled",
+										exitCode: 0,
+										shutdownReason: reason,
+										endReason: "disposed",
+									}),
+					),
+				);
+			}
+			this.usageBySession.clear();
+			this.aggregateUsageBySession.clear();
+		} finally {
+			await this.nemoRelay?.release();
+		}
 	}
 
 	async getSession(sessionId: string): Promise<SessionRecord | undefined> {
@@ -1741,6 +1781,7 @@ export class LocalRuntimeHost implements RuntimeHost {
 			userFiles?: string[];
 		},
 	): Promise<AgentResult> {
+		const turnMode = input.mode ?? session.config.mode ?? "act";
 		// An abort that arrived between turns targeted a run that had already
 		// ended; only aborts issued from here on belong to this turn.
 		session.aborting = false;
@@ -1784,6 +1825,7 @@ export class LocalRuntimeHost implements RuntimeHost {
 				prompt,
 				preparedInput.userImages,
 				preparedInput.userFiles,
+				turnMode,
 			);
 
 			while (shouldAutoContinueTeamRuns(session, result.finishReason)) {
@@ -1793,7 +1835,13 @@ export class LocalRuntimeHost implements RuntimeHost {
 					session,
 					updates,
 				);
-				result = await this.executeAgentTurn(session, continuationPrompt);
+				result = await this.executeAgentTurn(
+					session,
+					continuationPrompt,
+					undefined,
+					undefined,
+					turnMode,
+				);
 			}
 
 			return result;
@@ -1914,6 +1962,7 @@ export class LocalRuntimeHost implements RuntimeHost {
 		prompt: string,
 		userImages?: string[],
 		userFiles?: string[],
+		mode: NemoRelayRunContext["mode"] = session.config.mode ?? "act",
 	): Promise<AgentResult> {
 		const shouldContinue =
 			session.started || session.agent.getMessages().length > 0;
@@ -1944,6 +1993,8 @@ export class LocalRuntimeHost implements RuntimeHost {
 		});
 
 		try {
+			const relayContext = this.nemoRelayRunContexts.get(session.agent);
+			if (relayContext) relayContext.mode = mode;
 			const runFn = () => {
 				const run = shouldContinue
 					? session.agent.continue(prompt, userImages, userFiles)

@@ -101,9 +101,9 @@ import {
 	handleSessionRemovePendingPrompt,
 	handleSessionRestore,
 	handleSessionSearch,
+	handleSessionSteerFirstPendingPrompt,
 	handleSessionUpdate,
 	handleSessionUpdateConnection,
-	handleSessionSteerFirstPendingPrompt,
 	handleSessionUpdatePendingPrompt,
 } from "./handlers/session-handlers";
 import { HubEventLogStore } from "./hub-event-log";
@@ -259,6 +259,7 @@ export class HubServerTransport implements NativeHubTransport {
 	private readonly settings: CoreSettingsService;
 	private readonly sessionSearch: SessionHistorySearchService;
 	private readonly cronService?: CronService;
+	private readonly runtimeHandlers: HubWebSocketServerOptions["runtimeHandlers"];
 	private readonly sessionHost: RuntimeHost &
 		Partial<PendingPromptsRuntimeService & CommandExecutionRuntimeService>;
 	private readonly hubId = createSessionId("hub_");
@@ -272,6 +273,7 @@ export class HubServerTransport implements NativeHubTransport {
 	private draining = false;
 
 	constructor(readonly options: HubWebSocketServerOptions) {
+		this.runtimeHandlers = options.runtimeHandlers;
 		this.sessionHost =
 			options.sessionHost ??
 			new LocalRuntimeHost({
@@ -725,10 +727,20 @@ export class HubServerTransport implements NativeHubTransport {
 			() => true,
 			"Hub shutting down before capability request was resolved.",
 		);
-		await this.sessionSearch.dispose();
-		await this.tasks.dispose();
-		await this.sessionHost.dispose("hub_server_stop");
-		await this.schedules.dispose();
+		let stopFailed = false;
+		let stopError: unknown;
+		const attempt = async (dispose: () => void | Promise<void>) => {
+			try {
+				await dispose();
+			} catch (error) {
+				if (!stopFailed) stopError = error;
+				stopFailed = true;
+			}
+		};
+		await attempt(() => this.sessionSearch.dispose());
+		await attempt(() => this.tasks.dispose());
+		await attempt(() => this.sessionHost.dispose("hub_server_stop"));
+		await attempt(() => this.schedules.dispose());
 		if (this.cronService) {
 			try {
 				await this.cronService.dispose();
@@ -736,11 +748,13 @@ export class HubServerTransport implements NativeHubTransport {
 				console.error("[hub] cron service stop failed", err);
 			}
 		}
-		this.eventLog?.close();
+		await attempt(() => this.runtimeHandlers.dispose?.());
+		await attempt(() => this.eventLog?.close());
 		this.eventLog = undefined;
-		this.runQueue?.close();
+		await attempt(() => this.runQueue?.close());
 		this.runQueue = undefined;
 		this.runExecutor = undefined;
+		if (stopFailed) throw stopError;
 	}
 
 	async handleCommand(

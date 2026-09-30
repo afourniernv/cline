@@ -174,6 +174,44 @@ teardown branch a stop routes through. Each session emits at most one
 `task.completed`. See `DOC.md` for the event payload and `source`
 field.
 
+### Optional NeMo Relay observability
+
+`@cline/core` can load NeMo Relay in the process that executes Cline model and
+tool calls. One reference-counted Relay plugin host is shared by local, Hub,
+and scheduled runtime hosts in that process. Each run receives an isolated
+scope stack; explicitly marked subagent runtimes borrow the active process host
+and propagate the current Relay trace context when Cline launches them inside
+that context, without taking ownership of plugin shutdown. Independent and
+queued teammate runs start as roots instead of inheriting an unrelated ambient
+run context.
+
+The integration observes Cline's normalized model stream and the actual tool
+callback after Cline policy and human approval. It records bounded, partial
+copies of those payloads and a small set of run, model, and tool measurements.
+Relay sanitizers operate on the copied events; Cline's provider and tool
+payloads are not changed. The run scope includes a bounded `data.cwd` copy for
+workspace filtering; it is never used as a metric label. Because this boundary
+is observation-only, Cline refuses to activate Relay configurations that
+register LLM or tool request intercepts, conditional execution guardrails,
+execution intercepts, or stream-execution intercepts and fails the run rather
+than silently bypassing those policies. Event and payload sanitizers remain
+supported because they operate on copied observability data.
+
+`cline.agent.active_tools` measures post-approval Cline tool callbacks. It does
+not represent sandbox processes, provider-owned tools, or nested MCP-server
+work. Detached teammate runtimes also do not currently expose enough parent
+context to guarantee nested Relay parentage.
+
+When the final owning runtime host stops, it stops admitting new observed
+runs, waits for accepted runs, flushes subscribers once, and closes the Relay
+activation. Accepted-run drain, subscriber flush, and activation close each
+have a separate five-second bound so a failed exporter cannot indefinitely
+block Cline shutdown. An absent or platform-unavailable optional Relay package
+is fail-open. Once Relay loads, initialization or configuration-inspection
+failure, process-host ownership conflicts, and active middleware that this
+observation-only boundary cannot enforce fail the run instead of silently
+bypassing user- or system-managed policy.
+
 ### Hub-Backed Runtime
 
 1. Host constructs a `RuntimeHost` through `@cline/core`.

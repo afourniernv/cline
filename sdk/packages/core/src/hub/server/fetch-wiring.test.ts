@@ -113,6 +113,48 @@ describe("hub runtime wiring", () => {
 		}
 	});
 
+	it("attempts owned runtime cleanup when an earlier Hub disposer fails", async () => {
+		localRuntimeHostMock.mockClear();
+		const { HubServerTransport } = (await import(".")) as unknown as {
+			HubServerTransport: new (
+				options: unknown,
+			) => {
+				stop(): Promise<void>;
+			};
+		};
+		const sessionHost = {
+			subscribe: vi.fn(() => () => {}),
+			dispose: vi.fn(async () => {}),
+			runtimeAddress: undefined,
+		};
+		const runtimeDispose = vi.fn(async () => {});
+		const transport = new HubServerTransport({
+			sessionHost,
+			runtimeHandlers: {
+				startSession: vi.fn(),
+				sendSession: vi.fn(),
+				abortSession: vi.fn(),
+				stopSession: vi.fn(),
+				dispose: runtimeDispose,
+			},
+			scheduleOptions: { dbPath: ":memory:" },
+			fetch: (async () => new Response()) as unknown as typeof fetch,
+		});
+		const stopError = new Error("search teardown failed");
+		Object.assign(
+			(transport as unknown as { sessionSearch: object }).sessionSearch,
+			{
+				dispose: vi.fn(async () => {
+					throw stopError;
+				}),
+			},
+		);
+
+		await expect(transport.stop()).rejects.toBe(stopError);
+		expect(sessionHost.dispose).toHaveBeenCalledWith("hub_server_stop");
+		expect(runtimeDispose).toHaveBeenCalledOnce();
+	});
+
 	it("forwards createLocalHubScheduleRuntimeHandlers fetch into its internal LocalRuntimeHost", async () => {
 		localRuntimeHostMock.mockClear();
 		const { createLocalHubScheduleRuntimeHandlers } = await import(
@@ -142,6 +184,22 @@ describe("hub runtime wiring", () => {
 			fetch?: typeof fetch;
 		};
 		expect(constructorArgs.fetch).toBeUndefined();
+	});
+
+	it("disposes the LocalRuntimeHost owned by schedule handlers", async () => {
+		localRuntimeHostMock.mockClear();
+		const { createLocalHubScheduleRuntimeHandlers } = await import(
+			"../daemon/runtime-handlers"
+		);
+
+		const handlers = createLocalHubScheduleRuntimeHandlers();
+		const host = localRuntimeHostMock.mock.instances[0] as unknown as {
+			dispose: ReturnType<typeof vi.fn>;
+		};
+		await handlers.dispose?.();
+
+		expect(host.dispose).toHaveBeenCalledOnce();
+		expect(host.dispose).toHaveBeenCalledWith("hub_schedule_runtime_dispose");
 	});
 
 	it("provides an executable headless completion tool to the real yolo runtime builder", async () => {

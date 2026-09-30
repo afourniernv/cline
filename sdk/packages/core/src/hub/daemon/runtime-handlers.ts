@@ -160,5 +160,8 @@ export function createLocalHubScheduleRuntimeHandlers(
 			await sessionHost.stopSession(sessionId);
 			return { applied: true };
 		},
+		async dispose() {
+			await sessionHost.dispose("hub_schedule_runtime_dispose");
+		},
 	};
 }
