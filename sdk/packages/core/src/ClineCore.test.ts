@@ -587,6 +587,37 @@ describe("ClineCore", () => {
 		expect(host.dispose).toHaveBeenCalledTimes(1);
 	});
 
+	it("still disposes the runtime host when automation teardown fails", async () => {
+		const host = {
+			runtimeAddress: undefined,
+			startSession: vi.fn(),
+			runTurn: vi.fn(),
+			getAccumulatedUsage: vi.fn(),
+			abort: vi.fn(),
+			stopSession: vi.fn(),
+			dispose: vi.fn(async () => {}),
+			getSession: vi.fn(async () => undefined),
+			listSessions: vi.fn(),
+			deleteSession: vi.fn(),
+			readSessionMessages: vi.fn(),
+			subscribe: vi.fn(() => () => {}),
+			updateSessionModel: vi.fn(),
+		};
+		createRuntimeHostMock.mockResolvedValue(host);
+		const core = await ClineCore.create();
+		const automationError = new Error("automation teardown failed");
+		Object.assign(core, {
+			automationService: {
+				dispose: vi.fn(async () => {
+					throw automationError;
+				}),
+			},
+		});
+
+		await expect(core.dispose()).rejects.toBe(automationError);
+		expect(host.dispose).toHaveBeenCalledOnce();
+	});
+
 	it("hydrates list rows through the core API", async () => {
 		const host = {
 			runtimeAddress: undefined,

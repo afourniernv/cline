@@ -13,15 +13,32 @@ import { asTrimmedString, toPositiveInt } from "./utils";
 
 let scheduleService: HubScheduleService | undefined;
 let scheduleCommands: HubScheduleCommandService | undefined;
+let scheduleRuntimeHandlers:
+	| ReturnType<typeof createLocalHubScheduleRuntimeHandlers>
+	| undefined;
 
 function getCommands(): HubScheduleCommandService {
 	if (!scheduleService || !scheduleCommands) {
+		scheduleRuntimeHandlers = createLocalHubScheduleRuntimeHandlers();
 		scheduleService = new HubScheduleService({
-			runtimeHandlers: createLocalHubScheduleRuntimeHandlers(),
+			runtimeHandlers: scheduleRuntimeHandlers,
 		});
 		scheduleCommands = new HubScheduleCommandService(scheduleService);
 	}
 	return scheduleCommands;
+}
+
+export async function disposeRoutineSchedules(): Promise<void> {
+	const service = scheduleService;
+	const runtimeHandlers = scheduleRuntimeHandlers;
+	scheduleService = undefined;
+	scheduleCommands = undefined;
+	scheduleRuntimeHandlers = undefined;
+	try {
+		await service?.dispose();
+	} finally {
+		await runtimeHandlers?.dispose?.();
+	}
 }
 
 async function clientCommand(

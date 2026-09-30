@@ -405,9 +405,21 @@ export class ClineCore {
 	 * ```
 	 */
 	dispose: RuntimeHost["dispose"] = async (...args) => {
+		let disposeFailed = false;
+		let disposeError: unknown;
 		try {
-			await this.automationService?.dispose();
-			await this.host.dispose(...args);
+			try {
+				await this.automationService?.dispose();
+			} catch (error) {
+				disposeFailed = true;
+				disposeError = error;
+			}
+			try {
+				await this.host.dispose(...args);
+			} catch (error) {
+				if (!disposeFailed) disposeError = error;
+				disposeFailed = true;
+			}
 		} finally {
 			this.unsubscribeBootstrapCleanup();
 			const sessionIds = [...this.activeSessionBootstraps.keys()];
@@ -415,6 +427,7 @@ export class ClineCore {
 				sessionIds.map((sessionId) => this.disposeSessionBootstrap(sessionId)),
 			);
 		}
+		if (disposeFailed) throw disposeError;
 	};
 	/**
 	 * Retrieves information about a specific session by ID.
