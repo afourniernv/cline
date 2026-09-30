@@ -678,12 +678,15 @@
       },
       "devDependencies": {
         "@types/ws": "^8.18.1",
+        "nemo-relay-node": "0.9.3",
         "posthog-node": "^5.8.0",
       },
       "peerDependencies": {
+        "nemo-relay-node": "0.9.3",
         "posthog-node": "^5.8.0",
       },
       "optionalPeers": [
+        "nemo-relay-node",
         "posthog-node",
       ],
     },
@@ -4177,6 +4180,22 @@
     "natural-compare": ["natural-compare@1.4.0", "", {}, "sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw=="],
 
     "negotiator": ["negotiator@1.1.0", "", { "dependencies": { "content-type": "^2.1.0" } }, "sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg=="],
+
+    "nemo-relay-node": ["nemo-relay-node@0.9.3", "", { "optionalDependencies": { "nemo-relay-node-darwin-arm64": "0.9.3", "nemo-relay-node-linux-arm64-gnu": "0.9.3", "nemo-relay-node-linux-arm64-musl": "0.9.3", "nemo-relay-node-linux-x64-gnu": "0.9.3", "nemo-relay-node-linux-x64-musl": "0.9.3", "nemo-relay-node-win32-arm64-msvc": "0.9.3", "nemo-relay-node-win32-x64-msvc": "0.9.3" } }, "sha512-OeHe6MYKPxmgmFOzWnA8Nb70koZBfUe2inXyXXwcUTMG1blWCZ2bYWxSwYc1INX2oeQda+WvlU2nneUI8BXgCQ=="],
+
+    "nemo-relay-node-darwin-arm64": ["nemo-relay-node-darwin-arm64@0.9.3", "", { "os": "darwin", "cpu": "arm64" }, "sha512-aRJ6jX5MozR8OAnXcGCIwyUO93sSaa4fgcnEoV14KMg7kr3/5Sb39WWqE+EhoHYdMB/bLbmGJvSLXG1ne6N8kQ=="],
+
+    "nemo-relay-node-linux-arm64-gnu": ["nemo-relay-node-linux-arm64-gnu@0.9.3", "", { "os": "linux", "cpu": "arm64" }, "sha512-m5mTT4aKFOIm1w9EdRNSKPb+edOyxMVhtA6SEiXfBGqqAM8s/WPs2zyDpb6GnxezvkAMWvnXKjinNtRv+7C4xA=="],
+
+    "nemo-relay-node-linux-arm64-musl": ["nemo-relay-node-linux-arm64-musl@0.9.3", "", { "os": "linux", "cpu": "arm64" }, "sha512-43f9os3UxbNXaZUg6yNC7Lm+YpBHwYfOQ1AZNxnLNLqdx9QqGNHW/c3Sy/YqDnXZukcYIHaCaRnajRZxUvkBLg=="],
+
+    "nemo-relay-node-linux-x64-gnu": ["nemo-relay-node-linux-x64-gnu@0.9.3", "", { "os": "linux", "cpu": "x64" }, "sha512-sIG2cBp+uvatE/b0VnosBmFFLjh44DYW8rvJU8CFsTRVgE2/rWBylMiGpizUHpON0b4Sr5XqKJbT3ZPobbiibQ=="],
+
+    "nemo-relay-node-linux-x64-musl": ["nemo-relay-node-linux-x64-musl@0.9.3", "", { "os": "linux", "cpu": "x64" }, "sha512-7FSoE3yYnwcp5yunDQLaiX8rnxIvbjuC+AmXQ+TF0ITm8BqTkGBgElYBkUOaJtsREqnfXgKagFgQdxb4D/wC0g=="],
+
+    "nemo-relay-node-win32-arm64-msvc": ["nemo-relay-node-win32-arm64-msvc@0.9.3", "", { "os": "win32", "cpu": "arm64" }, "sha512-T2wpWSRv6Qne7UZakikXXETY8YX97ixeYVNmbfpkgfUqSKDUPaki0UvJC6Wr/OGn3SJi/i5FOMbFlt0cewFH5w=="],
+
+    "nemo-relay-node-win32-x64-msvc": ["nemo-relay-node-win32-x64-msvc@0.9.3", "", { "os": "win32", "cpu": "x64" }, "sha512-TRqTzwPPXQp313ju8qmUM5oV7W1OKut9yiRTPIJt1GUhGdostqwDHbVayqCbBfXjZ+LgGOcn0rkCCikxSMu3FA=="],
 
     "netmask": ["netmask@2.1.1", "", {}, "sha512-eonl3sLUha+S1GzTPxychyhnUzKyeQkZ7jLjKrBagJgPla13F+uQ71HgpFefyHgqrjEbCPkDArxYsjY8/+gLKA=="],
 
