@@ -17,6 +17,18 @@ function sessionId(metadata: unknown): string | undefined {
 	] as string | undefined;
 }
 
+function activeToolValues(
+	metrics: Array<{ name: string; measurements: unknown[] }>,
+): number[] {
+	return metrics
+		.filter((metric) => metric.name === "cline.agent.tool.active")
+		.flatMap((metric) =>
+			(metric.measurements as Array<{ value: number }>).map(
+				(measurement) => measurement.value,
+			),
+		);
+}
+
 afterEach(() => {
 	vi.useRealTimers();
 });
@@ -173,6 +185,7 @@ describe("NeMo Relay concurrency qualification", () => {
 				.filter((operation) => operation.kind === "tool-end")
 				.map((operation) => toolNames.get(operation.handle)),
 		).toEqual(["tool-two", "tool-one"]);
+		expect(activeToolValues(harness.metrics)).toEqual([1, 1, -1, -1]);
 		expect(sourceClosed).toBe(true);
 		expect(harness.violations).toEqual([]);
 		expect(harness.stacks.every((stack) => stack.frames.length === 0)).toBe(

@@ -12,6 +12,7 @@ import type {
 	RelayModule,
 	RelayScopeHandle,
 } from "./contracts";
+import type { RunMetrics } from "./metrics";
 import {
 	boundedMetadataId,
 	boundedText,
@@ -105,6 +106,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 	constructor(
 		private readonly relay: RelayModule,
 		private readonly parent: RelayScopeHandle,
+		private readonly metrics: RunMetrics,
 		private readonly logger?: BasicLogger,
 	) {}
 
@@ -177,7 +179,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 				boundedMetadataId(modelId),
 			);
 			if (projectedRequest.omissionReason) {
-				// The bounded projection records the omission on the LLM start event.
+				this.emitOmission("model", projectedRequest.omissionReason);
 			}
 		} catch (error) {
 			this.logFailure("start model observation", error);
@@ -197,6 +199,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		const outputOmissions = new Set<string>();
 		let completed = false;
 		let failed = false;
+		const startedAt = performance.now();
 		try {
 			const stream = await model.stream(request);
 			for await (const event of stream) {
@@ -258,15 +261,19 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		} finally {
 			if (truncated) {
 				outputOmissions.add("payload_truncated");
+				this.emitOmission("model", "payload_truncated");
 			}
 			if (omittedModelOutput) {
 				outputOmissions.add("non_text_output_not_projected");
+				this.emitOmission("model", "non_text_output_not_projected");
 			}
 			if (redactedReasoning) {
 				outputOmissions.add("redacted_reasoning_not_projected");
+				this.emitOmission("model", "redacted_reasoning_not_projected");
 			}
 			if (toolCallIdsTruncated) {
 				outputOmissions.add("tool_call_count_truncated");
+				this.emitOmission("model", "tool_call_count_truncated");
 			}
 			const outcome = failed
 				? "failed"
@@ -289,6 +296,14 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 				outcome === "failed" && typeof errorRetryable === "boolean"
 					? errorRetryable
 					: undefined;
+			this.metrics.modelCompleted({
+				outcome,
+				durationMs: performance.now() - startedAt,
+				usage,
+				toolCallCount: toolCallIds.size,
+				errorClass: boundedErrorClass,
+				errorRetryable: boundedErrorRetryable,
+			});
 			if (handle) {
 				try {
 					const projectedResponse = projectJson({
@@ -307,6 +322,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 					});
 					if (projectedResponse.omissionReason) {
 						outputOmissions.add(projectedResponse.omissionReason);
+						this.emitOmission("model", projectedResponse.omissionReason);
 					}
 					this.relay.llmCallEnd(handle, projectedResponse.value, null, {
 						"cline.outcome": outcome,
@@ -365,14 +381,28 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		} catch (error) {
 			this.logFailure("start tool observation", error);
 		}
+		if (projectedInput.omissionReason) {
+			this.emitOmission("tool", projectedInput.omissionReason);
+		}
+
+		let outcome: "completed" | "failed" = "completed";
 		let output: unknown;
 		let executionFailed = false;
 		let executionError: unknown;
+		const startedAt = performance.now();
+		this.metrics.toolStarted();
 		try {
 			output = await tool.execute.call(tool, input, context);
 		} catch (error) {
+			outcome = "failed";
 			executionFailed = true;
 			executionError = error;
+		} finally {
+			this.metrics.toolCompleted(
+				tool.name,
+				outcome,
+				performance.now() - startedAt,
+			);
 		}
 
 		if (executionFailed) {
@@ -407,11 +437,18 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 						? { "cline.response_omission": projectedOutput.omissionReason }
 						: null,
 				);
+				if (projectedOutput.omissionReason) {
+					this.emitOmission("tool", projectedOutput.omissionReason);
+				}
 			} catch (error) {
 				this.logFailure("finish tool observation", error);
 			}
 		}
 		return output;
+	}
+
+	private emitOmission(operation: "model" | "tool", reason: string): void {
+		this.metrics.omission(operation, reason);
 	}
 
 	private logFailure(operation: string, error: unknown): void {

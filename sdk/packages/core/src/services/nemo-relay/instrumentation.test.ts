@@ -12,7 +12,11 @@ describe("NemoRelay runtime instrumentation", () => {
 		const owner = manager.acquire();
 		const events: AgentModelEvent[] = [
 			{ type: "text-delta", text: "hello" },
-			{ type: "usage", usage: { inputTokens: 3, outputTokens: 1 } },
+			{
+				type: "usage",
+				usage: { inputTokens: 3, outputTokens: 1, totalCost: 0.0125 },
+			},
+			{ type: "tool-call-delta", toolCallId: "model-tool-call" },
 			{ type: "finish", reason: "stop" },
 		];
 		const model: AgentModel = {
@@ -66,6 +70,110 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.llmEnds).toHaveLength(1);
 		expect(harness.toolStarts).toHaveLength(1);
 		expect(harness.toolEnds).toHaveLength(1);
+		const metricText = JSON.stringify(harness.metrics);
+		expect(metricText).not.toContain("secret-tool-name");
+		expect(metricText).not.toContain("secret-provider");
+		expect(metricText).not.toContain("secret-model");
+		expect(metricText).not.toContain("tool-input");
+		expect(metricText).not.toContain("tool-result");
+		const runMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.run.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(runMeasurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.runs",
+					value: 1,
+					attributes: {
+						outcome: "completed",
+						surface: "cli",
+						mode: "act",
+						agent_kind: "root",
+						used_skills_tool: false,
+					},
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.duration",
+					unit: "s",
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.iterations",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.model_attempts",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.peak_active_tools",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_tool_calls",
+					value: 0,
+				}),
+			]),
+		);
+		const toolMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.tool.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(toolMeasurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.tool.executions",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.tool.duration",
+					unit: "s",
+				}),
+			]),
+		);
+		const modelMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.model.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(modelMeasurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.model.calls",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.model.duration",
+					unit: "s",
+				}),
+				expect.objectContaining({
+					name: "cline.agent.model.tokens",
+					value: 3,
+					unit: "{token}",
+					attributes: expect.objectContaining({ token_type: "input" }),
+				}),
+				expect.objectContaining({
+					name: "cline.agent.model.cost",
+					value: 0.0125,
+					unit: "USD",
+				}),
+				expect.objectContaining({
+					name: "cline.agent.model.tool_calls",
+					value: 1,
+				}),
+			]),
+		);
+		for (const metric of harness.metrics) {
+			for (const measurement of metric.measurements as Array<
+				Record<string, unknown>
+			>) {
+				expect(measurement.attributes).toMatchObject({ agent_kind: "root" });
+			}
+		}
+		const activeToolValues = harness.metrics
+			.filter((metric) => metric.name === "cline.agent.tool.active")
+			.flatMap((metric) =>
+				(metric.measurements as Array<Record<string, unknown>>).map(
+					(measurement) => measurement.value,
+				),
+			);
+		expect(activeToolValues).toEqual([1, -1]);
 		await owner.release();
 	});
 
@@ -113,14 +221,93 @@ describe("NemoRelay runtime instrumentation", () => {
 				}),
 			];
 			await bothStartedPromise;
-			expect(harness.toolStarts).toHaveLength(2);
-			expect(harness.toolEnds).toHaveLength(0);
+			const activeValues = () =>
+				harness.metrics
+					.filter((metric) => metric.name === "cline.agent.tool.active")
+					.flatMap((metric) =>
+						(metric.measurements as Array<Record<string, unknown>>).map(
+							(measurement) => measurement.value,
+						),
+					);
+			expect(activeValues()).toEqual([1, 1]);
 			releaseTools();
 			await Promise.all(calls);
-			expect(harness.toolEnds).toHaveLength(2);
+			expect(activeValues()).toEqual([1, 1, -1, -1]);
 			return agentResult();
 		});
 
+		expect(JSON.stringify(harness.metrics)).not.toContain("private-tool-name");
+		const runMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.run.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(runMeasurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.run.peak_active_tools",
+					value: 2,
+				}),
+			]),
+		);
+		await owner.release();
+	});
+
+	it("associates only canonical skills tool executions with the run", async () => {
+		const harness = createRelayHarness({ configured: true });
+		const manager = new NemoRelayRuntimeManager({
+			load: async () => harness.modules,
+		});
+		const owner = manager.acquire();
+
+		await owner.observeRun(runContext, async (instrumentation) => {
+			if (!instrumentation) throw new Error("expected Relay instrumentation");
+			const [skills, similarlyNamed, failingSkills] = instrumentation.wrapTools(
+				[
+					{
+						name: "skills",
+						description: "test",
+						inputSchema: {},
+						execute: async () => "loaded",
+					},
+					{
+						name: "skills-preview",
+						description: "test",
+						inputSchema: {},
+						execute: async () => "done",
+					},
+					{
+						name: "skills",
+						description: "test",
+						inputSchema: {},
+						execute: async () => {
+							throw new Error("load failed");
+						},
+					},
+				],
+			);
+			const context = { agentId: "agent", iteration: 1, toolCallId: "call" };
+			await skills.execute(undefined, context);
+			await similarlyNamed.execute(undefined, context);
+			await expect(failingSkills.execute(undefined, context)).rejects.toThrow(
+				"load failed",
+			);
+			return agentResult();
+		});
+
+		const runMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.run.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(runMeasurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.runs",
+					attributes: expect.objectContaining({ used_skills_tool: true }),
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_tool_calls",
+					value: 2,
+				}),
+			]),
+		);
 		await owner.release();
 	});
 
@@ -246,6 +433,59 @@ describe("NemoRelay runtime instrumentation", () => {
 
 		expect(executions).toBe(1);
 		expect(harness.toolEnds).toHaveLength(0);
+		expect(
+			harness.metrics
+				.filter((metric) => metric.name === "cline.agent.tool.active")
+				.flatMap((metric) =>
+					(metric.measurements as Array<Record<string, unknown>>).map(
+						(measurement) => measurement.value,
+					),
+				),
+		).toEqual([1, -1]);
+		expect(
+			harness.metrics.find(
+				(metric) => metric.name === "cline.agent.tool.completed",
+			),
+		).toBeDefined();
+		await owner.release();
+	});
+
+	it("keeps execution fail-open when the optional metric surface is malformed", async () => {
+		const harness = createRelayHarness({ configured: true });
+		(harness.relay as { MetricKind?: unknown }).MetricKind = undefined;
+		const manager = new NemoRelayRuntimeManager({
+			load: async () => harness.modules,
+		});
+		const owner = manager.acquire();
+		let executions = 0;
+
+		const result = await owner.observeRun(
+			runContext,
+			async (instrumentation) => {
+				if (!instrumentation) throw new Error("expected Relay instrumentation");
+				const [tool] = instrumentation.wrapTools([
+					{
+						name: "tool",
+						description: "test",
+						inputSchema: {},
+						execute: async () => {
+							executions += 1;
+							return "done";
+						},
+					},
+				]);
+				await tool.execute(undefined, {
+					agentId: "agent",
+					iteration: 1,
+					toolCallId: "call",
+				});
+				return agentResult();
+			},
+		);
+
+		expect(result.finishReason).toBe("completed");
+		expect(executions).toBe(1);
+		expect(harness.metrics).toEqual([]);
 		await owner.release();
 	});
 
@@ -306,6 +546,7 @@ describe("NemoRelay runtime instrumentation", () => {
 		).rejects.toThrow(canary);
 
 		expect(JSON.stringify(harness.popped)).not.toContain(canary);
+		expect(JSON.stringify(harness.metrics)).not.toContain(canary);
 		await owner.release();
 	});
 
@@ -377,6 +618,13 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(JSON.stringify(harness.llmEnds)).not.toContain(
 			"SECRET_PROVIDER_ERROR",
 		);
+		const modelMeasurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.model.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(modelMeasurements[0]?.attributes).toMatchObject({
+			error_class: "auth",
+			error_retryable: false,
+		});
 		await owner.release();
 	});
 
@@ -434,6 +682,7 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.llmEnds[1]?.[3]).not.toHaveProperty("cline.error_class");
 		expect(harness.llmEnds[1]?.[3]).not.toHaveProperty("cline.error_retryable");
 		expect(JSON.stringify(harness.llmEnds)).not.toContain(canary);
+		expect(JSON.stringify(harness.metrics)).not.toContain(canary);
 		await owner.release();
 	});
 
@@ -455,6 +704,7 @@ describe("NemoRelay runtime instrumentation", () => {
 								outputTokens: 1,
 								cacheReadTokens: 2,
 								cacheWriteTokens: 0,
+								totalCost: 0.01,
 							},
 						} as const;
 						yield {
@@ -464,6 +714,7 @@ describe("NemoRelay runtime instrumentation", () => {
 								outputTokens: 2,
 								cacheReadTokens: 0,
 								cacheWriteTokens: 1,
+								totalCost: 0.02,
 							},
 						} as const;
 						yield { type: "finish", reason: "stop" } as const;
@@ -488,15 +739,67 @@ describe("NemoRelay runtime instrumentation", () => {
 					outputTokens: 3,
 					cacheReadTokens: 2,
 					cacheWriteTokens: 1,
+					totalCost: 0.03,
 				},
 			},
 		});
 		expect(harness.llmEnds[0]?.[1]).not.toHaveProperty(
 			"cline_response.usage.reasoningTokenCount",
 		);
-		expect(harness.llmEnds[0]?.[1]).not.toHaveProperty(
-			"cline_response.usage.totalCost",
-		);
+		const cost = (
+			harness.metrics.find(
+				(metric) => metric.name === "cline.agent.model.completed",
+			)?.measurements as Array<Record<string, unknown>>
+		).find((measurement) => measurement.name === "cline.agent.model.cost");
+		expect(cost?.unit).toBe("USD");
+		expect(cost?.value).toBeCloseTo(0.03);
+		await owner.release();
+	});
+
+	it.each([
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		-0.01,
+	])("omits invalid model cost %s", async (invalidCost) => {
+		const harness = createRelayHarness({ configured: true });
+		const manager = new NemoRelayRuntimeManager({
+			load: async () => harness.modules,
+		});
+		const owner = manager.acquire();
+		await owner.observeRun(runContext, async (instrumentation) => {
+			if (!instrumentation) {
+				throw new Error("expected Relay instrumentation");
+			}
+			const model = instrumentation.wrapModel(
+				{
+					async *stream() {
+						yield {
+							type: "usage",
+							usage: { totalCost: invalidCost },
+						} as const;
+						yield { type: "finish", reason: "stop" } as const;
+					},
+				},
+				"provider",
+				"model",
+			);
+			for await (const _event of await model.stream({
+				messages: [],
+				tools: [],
+			})) {
+				// Drain the physical stream.
+			}
+			return agentResult();
+		});
+
+		const measurements = harness.metrics.find(
+			(metric) => metric.name === "cline.agent.model.completed",
+		)?.measurements as Array<Record<string, unknown>>;
+		expect(
+			measurements.some(
+				(measurement) => measurement.name === "cline.agent.model.cost",
+			),
+		).toBe(false);
 		await owner.release();
 	});
 

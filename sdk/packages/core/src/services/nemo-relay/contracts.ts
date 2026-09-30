@@ -5,6 +5,17 @@ import type { AgentModel, AgentResult, AgentTool } from "@cline/shared";
  * @cline/core without its optional native Relay dependency still leaves a
  * resolvable public declaration graph.
  */
+export interface RelayMeasurement {
+	name: string;
+	kind: number;
+	valueType: number;
+	value: number;
+	unit?: string;
+	description?: string;
+	attributes?: RelayJson;
+	boundaries?: number[];
+}
+
 export type RelayScopeHandle = object;
 type RelayCallHandle = object;
 type RelayScopeStack = object;
@@ -12,6 +23,13 @@ type RelayPropagationContext = object;
 
 export interface RelayModule {
 	ScopeType: { Agent: number };
+	MetricKind: {
+		Counter: number;
+		UpDownCounter: number;
+		Gauge: number;
+		Histogram: number;
+	};
+	MetricValueType: { U64: number; I64: number; F64: number };
 	scopeStackActive(): boolean;
 	capturePropagationContext(): RelayPropagationContext;
 	createScopeStack(): RelayScopeStack;
@@ -34,6 +52,13 @@ export interface RelayModule {
 		output?: RelayJson | null,
 		timestamp?: number | null,
 		metadata?: RelayJson | null,
+	): void;
+	metric(
+		name: string,
+		measurements: RelayMeasurement[],
+		handle?: RelayScopeHandle | null,
+		metadata?: RelayJson | null,
+		timestamp?: number | null,
 	): void;
 	llmCall(
 		name: string,
@@ -92,6 +117,16 @@ export interface RelayPluginModule {
 
 export type RelayRuntimeEnums = {
 	ScopeType: { Agent: number };
+	MetricKind: {
+		Counter: number;
+		UpDownCounter: number;
+		Histogram: number;
+	};
+	MetricValueType: {
+		U64: number;
+		I64: number;
+		F64: number;
+	};
 };
 
 export type RelayJson =

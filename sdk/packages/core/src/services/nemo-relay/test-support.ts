@@ -55,7 +55,14 @@ export function createRelayHarness(
 	const scopeOwners = new WeakMap<object, HarnessScopeStack>();
 	const callOwners = new WeakMap<object, HarnessScopeStack>();
 	const operations: Array<{
-		kind: "push" | "pop" | "llm-start" | "llm-end" | "tool-start" | "tool-end";
+		kind:
+			| "push"
+			| "pop"
+			| "metric"
+			| "llm-start"
+			| "llm-end"
+			| "tool-start"
+			| "tool-end";
 		stackId: number | null;
 		handle?: object;
 		parent?: object | null;
@@ -67,6 +74,7 @@ export function createRelayHarness(
 	const pushed: Array<{ name: string; handle: object }> = [];
 	const popped: Array<{ handle: object; output: unknown; metadata: unknown }> =
 		[];
+	const metrics: Array<{ name: string; measurements: unknown[] }> = [];
 	const llmStarts: unknown[][] = [];
 	const llmEnds: unknown[][] = [];
 	const toolStarts: unknown[][] = [];
@@ -135,6 +143,13 @@ export function createRelayHarness(
 	}));
 	const relay = {
 		ScopeType: { Agent: 0 },
+		MetricKind: {
+			Counter: 0,
+			UpDownCounter: 1,
+			Gauge: 2,
+			Histogram: 3,
+		},
+		MetricValueType: { U64: 0, I64: 1, F64: 2 },
 		scopeStackActive: vi.fn(() => stackStorage.getStore() !== undefined),
 		capturePropagationContext: vi.fn(
 			(): HarnessPropagationContext => ({
@@ -180,6 +195,18 @@ export function createRelayHarness(
 					stackId: stack.id,
 					handle,
 					metadata,
+				});
+			},
+		),
+		metric: vi.fn(
+			(name: string, measurements: unknown[], handle?: object | null) => {
+				const stack = validateHandleOwner("metric", handle, scopeOwners);
+				metrics.push({ name, measurements });
+				operations.push({
+					kind: "metric",
+					stackId: stack?.id ?? null,
+					handle: handle ?? undefined,
+					name,
 				});
 			},
 		),
@@ -260,6 +287,7 @@ export function createRelayHarness(
 		violations,
 		pushed,
 		popped,
+		metrics,
 		llmStarts,
 		llmEnds,
 		toolStarts,

@@ -380,6 +380,18 @@ describe("NemoRelayRuntimeManager", () => {
 		expect(harness.relay.pushScope.mock.calls[1]?.[5]).toMatchObject({
 			"cline.is_subagent": true,
 		});
+		const runKinds = harness.metrics
+			.filter((metric) => metric.name === "cline.agent.run.completed")
+			.map((metric) =>
+				(
+					metric.measurements as Array<{
+						name: string;
+						attributes?: { agent_kind?: string };
+					}>
+				).find((measurement) => measurement.name === "cline.agent.runs"),
+			)
+			.map((measurement) => measurement?.attributes?.agent_kind);
+		expect(runKinds).toEqual(["subagent", "root"]);
 		await owner.release();
 	});
 

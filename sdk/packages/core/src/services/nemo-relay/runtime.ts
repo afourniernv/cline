@@ -14,6 +14,7 @@ import {
 	relayRuntimeEnums,
 } from "./contracts";
 import { errorSummary, RunInstrumentation, safeLog } from "./instrumentation";
+import { RunMetrics } from "./metrics";
 
 export type {
 	NemoRelayMode,
@@ -468,16 +469,30 @@ export class NemoRelayRuntimeManager {
 			return execute();
 		}
 
+		const startedAt = performance.now();
+		const metrics = new RunMetrics(relay, handle, context, (error) => {
+			safeLog(logger, "debug", "Failed to emit NeMo Relay metric", {
+				component: "nemo-relay",
+				error: errorSummary(error),
+			});
+		});
 		let result: T | undefined;
 		let threw = false;
 		try {
-			result = await execute(new RunInstrumentation(relay, handle, logger));
+			result = await execute(
+				new RunInstrumentation(relay, handle, metrics, logger),
+			);
 			return result;
 		} catch (error) {
 			threw = true;
 			throw error;
 		} finally {
 			const outcome = taskOutcome(result, threw);
+			metrics.runCompleted({
+				outcome,
+				durationMs: performance.now() - startedAt,
+				iterations: result?.iterations,
+			});
 			try {
 				relay.popScope(handle, { outcome }, null, {
 					...(outcome === "completed"
