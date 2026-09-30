@@ -85,15 +85,20 @@
 		"zod": "^4.3.6"
 	},
 	"peerDependencies": {
+		"nemo-relay-node": "0.9.3",
 		"posthog-node": "^5.8.0"
 	},
 	"peerDependenciesMeta": {
+		"nemo-relay-node": {
+			"optional": true
+		},
 		"posthog-node": {
 			"optional": true
 		}
 	},
 	"devDependencies": {
 		"@types/ws": "^8.18.1",
+		"nemo-relay-node": "0.9.3",
 		"posthog-node": "^5.8.0"
 	},
 	"engines": {
