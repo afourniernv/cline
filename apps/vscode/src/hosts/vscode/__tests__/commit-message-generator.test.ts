@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, mock } from "bun:test"
 import "should"
 import sinon from "sinon"
+import * as actualSdkApiHandler from "@/sdk/sdk-api-handler"
 import * as actualGitUtils from "@/utils/git"
 
 // bun loads real ESM, so sinon cannot stub the `@/utils/git` namespace export
@@ -11,9 +12,75 @@ const gitUtilsMock = () => ({ ...actualGitUtils, getGitDiff: getGitDiffStub })
 mock.module("@/utils/git", gitUtilsMock)
 mock.module("@utils/git", gitUtilsMock)
 
-import { buildCommitMessageSystemPrompt, getGitDiffStagedFirst } from "../commit-message-generator"
+// The handler is the request boundary: `createMessage` being called is the
+// request going out.
+const buildApiHandlerStub: sinon.SinonStub = sinon.stub()
+mock.module("@/sdk/sdk-api-handler", () => ({ ...actualSdkApiHandler, buildApiHandler: buildApiHandlerStub }))
+
+import {
+	abortCommitGeneration,
+	buildCommitMessageSystemPrompt,
+	getGitDiffStagedFirst,
+	performCommitMsgGeneration,
+} from "../commit-message-generator"
+
+function deferred<T>() {
+	let resolve!: (value: T) => void
+	const promise = new Promise<T>((res) => {
+		resolve = res
+	})
+	return { promise, resolve }
+}
+
+async function* textStream(text: string) {
+	yield { type: "text", text }
+}
+
+function fakeController(getRulesForSystemPrompt: () => Promise<string>) {
+	return { stateManager: { getApiConfiguration: () => ({}) }, getRulesForSystemPrompt } as never
+}
 
 describe("commit-message-generator", () => {
+	describe("performCommitMsgGeneration cancellation", () => {
+		beforeEach(() => {
+			buildApiHandlerStub.reset()
+		})
+
+		it("sends no request when cancelled while the rules are loading", async () => {
+			const rules = deferred<string>()
+			const createMessage = sinon.stub().callsFake(() => textStream("feat: x"))
+			buildApiHandlerStub.returns({ createMessage })
+			const inputBox = { value: "" }
+
+			const generation = performCommitMsgGeneration(
+				fakeController(() => rules.promise),
+				"diff",
+				inputBox,
+			)
+			abortCommitGeneration()
+			rules.resolve("")
+			await generation
+
+			createMessage.called.should.be.false()
+			inputBox.value.should.equal("")
+		})
+
+		it("sends the request when not cancelled", async () => {
+			const createMessage = sinon.stub().callsFake(() => textStream("feat: x"))
+			buildApiHandlerStub.returns({ createMessage })
+			const inputBox = { value: "" }
+
+			await performCommitMsgGeneration(
+				fakeController(async () => ""),
+				"diff",
+				inputBox,
+			)
+
+			createMessage.calledOnce.should.be.true()
+			inputBox.value.should.equal("feat: x")
+		})
+	})
+
 	describe("buildCommitMessageSystemPrompt", () => {
 		it("returns the base prompt alone when there are no rules", () => {
 			const prompt = buildCommitMessageSystemPrompt("")
