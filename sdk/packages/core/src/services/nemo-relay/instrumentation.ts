@@ -390,7 +390,11 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 			executionFailed = true;
 			executionError = error;
 		} finally {
-			this.metrics.toolCompleted(outcome, performance.now() - startedAt);
+			this.metrics.toolCompleted(
+				tool.name,
+				outcome,
+				performance.now() - startedAt,
+			);
 		}
 
 		if (executionFailed) {

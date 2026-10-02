@@ -1,4 +1,5 @@
 import type { AgentUsage, ProviderErrorClass } from "@cline/shared";
+import { DefaultToolNames } from "../../extensions/tools/constants";
 import type {
 	NemoRelayRunContext,
 	RelayJson,
@@ -39,6 +40,7 @@ export class RunMetrics {
 	private activeTools = 0;
 	private peakActiveTools = 0;
 	private modelAttempts = 0;
+	private skillToolCalls = 0;
 
 	constructor(
 		private readonly relay: RelayModule,
@@ -101,8 +103,13 @@ export class RunMetrics {
 		]);
 	}
 
-	toolCompleted(outcome: "completed" | "failed", durationMs: number): void {
+	toolCompleted(
+		toolName: string,
+		outcome: "completed" | "failed",
+		durationMs: number,
+	): void {
 		this.activeTools = Math.max(0, this.activeTools - 1);
+		if (toolName === DefaultToolNames.SKILLS) this.skillToolCalls += 1;
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", -1),
 		]);
@@ -140,6 +147,10 @@ export class RunMetrics {
 				"cline.agent.run.peak_active_tools",
 				this.peakActiveTools,
 			),
+			integerHistogram(
+				"cline.agent.run.skills_tool_calls",
+				this.skillToolCalls,
+			),
 		];
 		if (isNonNegativeSafeInteger(input.iterations)) {
 			metrics.push(
@@ -148,6 +159,7 @@ export class RunMetrics {
 		}
 		this.emit("cline.agent.run.completed", metrics, {
 			outcome: input.outcome,
+			invoked_skills_tool: this.skillToolCalls > 0,
 		});
 	}
 
