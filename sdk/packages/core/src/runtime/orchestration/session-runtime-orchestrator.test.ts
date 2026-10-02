@@ -33,6 +33,11 @@ import {
 	EMPTY_CONTENT_TEXT,
 } from "@cline/shared";
 import { describe, expect, it, vi } from "vitest";
+import type {
+	NemoRelayRunContext,
+	NemoRelayRunInstrumentation,
+	NemoRelayRunObserver,
+} from "../../services/nemo-relay/runtime";
 import { MESSAGE_BUILDER_LIMIT_ENV } from "../../session/services/message-builder";
 import {
 	SessionRuntime,
@@ -2048,19 +2053,33 @@ describe("SessionRuntime.shutdown", () => {
 		await expect(session.shutdown()).resolves.toBeUndefined();
 	});
 
-	it("waits for an aborted in-flight run before shutting down", async () => {
+	it("waits for an aborted run accepted before Relay startup completes", async () => {
+		let releaseObservation!: () => void;
+		let markObservationEntered!: () => void;
+		const observationGate = new Promise<void>((resolve) => {
+			releaseObservation = resolve;
+		});
+		const observationEntered = new Promise<void>((resolve) => {
+			markObservationEntered = resolve;
+		});
 		let releaseRun: (() => void) | undefined;
 		let markRunEntered: (() => void) | undefined;
+		let runtimeRuns = 0;
 		const runEntered = new Promise<void>((resolve) => {
 			markRunEntered = resolve;
 		});
 		const abortCalls: unknown[] = [];
+		let runtimeListener: ((event: AgentRuntimeEvent) => void) | undefined;
 		const runtime = {
 			async run() {
-				await new Promise<void>((resolve) => {
+				runtimeRuns += 1;
+				if (runtimeRuns > 1) throw new Error("late run admitted");
+				const runGate = new Promise<void>((resolve) => {
 					releaseRun = resolve;
 					markRunEntered?.();
 				});
+				runtimeListener?.({ type: "run-started", snapshot: makeSnapshot() });
+				await runGate;
 				return {
 					agentId: "agent_fake",
 					runId: "run_fake",
@@ -2084,8 +2103,11 @@ describe("SessionRuntime.shutdown", () => {
 				abortCalls.push(reason);
 				releaseRun?.();
 			},
-			subscribe() {
-				return () => {};
+			subscribe(listener: (event: AgentRuntimeEvent) => void) {
+				runtimeListener = listener;
+				return () => {
+					runtimeListener = undefined;
+				};
 			},
 			snapshot() {
 				return makeSnapshot();
@@ -2094,16 +2116,29 @@ describe("SessionRuntime.shutdown", () => {
 
 		const session = new SessionRuntime(makeAgentConfig(), {
 			createAgentRuntimeImpl: () => runtime,
+			nemoRelay: {
+				async observeRun(_context, execute) {
+					markObservationEntered();
+					await observationGate;
+					return execute();
+				},
+			},
 		});
 
 		const runPromise = session.run("slow");
-		await runEntered;
+		await observationEntered;
+		const lateRun = runPromise.then(() => session.run("late"));
 		session.abort("session_stop");
+		const shuttingDown = session.shutdown("session_stop");
+		releaseObservation();
+		await runEntered;
 		expect(abortCalls).toEqual(["session_stop"]);
-		await expect(session.shutdown("session_stop")).resolves.toBeUndefined();
+		await expect(shuttingDown).resolves.toBeUndefined();
 		await expect(runPromise).resolves.toMatchObject({
 			finishReason: "aborted",
 		});
+		await expect(lateRun).rejects.toThrow("after shutdown");
+		expect(runtimeRuns).toBe(1);
 		expect(session.canStartRun()).toBe(false);
 	});
 });
@@ -2878,6 +2913,78 @@ describe("SessionRuntime.run — tracker wiring (P1 #3)", () => {
 // Auth retry
 // ---------------------------------------------------------------------------
 
+describe("SessionRuntime NeMo Relay observation", () => {
+	it("injects model and tool wrappers once per run", async () => {
+		const tool: AgentTool = {
+			name: "read_file",
+			description: "Read a file",
+			inputSchema: {},
+			execute: vi.fn(),
+		};
+		const wrapModel = vi.fn((model: AgentModel) => model);
+		const wrapTools = vi.fn((tools: AgentTool[]) => tools);
+		const instrumentation: NemoRelayRunInstrumentation = {
+			wrapModel,
+			wrapTools,
+		};
+		const observeRun = vi.fn(
+			async (
+				_context: unknown,
+				execute: (
+					instrumentation?: NemoRelayRunInstrumentation,
+				) => Promise<unknown>,
+			) => execute(instrumentation),
+		);
+		const { runtime } = makeFakeAgentRuntime();
+		const nemoRelayRunContext: NemoRelayRunContext = {
+			surface: "cli",
+			mode: "act",
+			isSubagent: false,
+			cwd: "/workspace",
+		};
+		const session = new SessionRuntime(
+			makeAgentConfig({
+				tools: [tool],
+				extensionContext: {
+					client: { name: "cline-cli", platform: "cli" },
+					workspace: { rootPath: "/workspace", mode: "act" },
+				},
+			}),
+			{
+				createAgentRuntimeImpl: () => runtime,
+				nemoRelay: { observeRun } as unknown as NemoRelayRunObserver,
+				nemoRelayRunContext,
+			},
+		);
+
+		await session.run("go");
+		nemoRelayRunContext.mode = "plan";
+		await session.continue("keep going");
+
+		expect(observeRun).toHaveBeenCalledTimes(2);
+		expect(observeRun.mock.calls[0]?.[0]).toEqual({
+			surface: "cli",
+			mode: "act",
+			isSubagent: false,
+			cwd: "/workspace",
+		});
+		expect(observeRun.mock.calls[1]?.[0]).toEqual({
+			surface: "cli",
+			mode: "plan",
+			isSubagent: false,
+			cwd: "/workspace",
+		});
+		expect(wrapModel).toHaveBeenCalledTimes(2);
+		expect(wrapModel).toHaveBeenCalledWith(
+			expect.anything(),
+			"anthropic",
+			"claude-3-5-sonnet",
+		);
+		expect(wrapTools).toHaveBeenCalledTimes(2);
+		expect(wrapTools.mock.calls[0]?.[0]).toContain(tool);
+	});
+});
+
 describe("SessionRuntime auth retry", () => {
 	const authFailure = {
 		status: "failed",
@@ -2919,9 +3026,22 @@ describe("SessionRuntime auth retry", () => {
 			},
 			{ result: { outputText: "recovered" } },
 		]);
+		const wrapModel = vi.fn((model: AgentModel) => model);
+		const wrapTools = vi.fn((tools: AgentTool[]) => tools);
+		const observeRun = vi.fn(
+			async (
+				_context: unknown,
+				execute: (
+					instrumentation?: NemoRelayRunInstrumentation,
+				) => Promise<unknown>,
+			) => execute({ wrapModel, wrapTools }),
+		);
 		const session = new SessionRuntime(
 			makeAgentConfig({ onAuthError, telemetry }),
-			deps,
+			{
+				...deps,
+				nemoRelay: { observeRun } as unknown as NemoRelayRunObserver,
+			},
 		);
 
 		const terminalEvents: AgentEvent[] = [];
@@ -2930,6 +3050,9 @@ describe("SessionRuntime auth retry", () => {
 
 		expect(onAuthError).toHaveBeenCalledTimes(1);
 		expect(createdCount()).toBe(2);
+		expect(observeRun).toHaveBeenCalledOnce();
+		expect(wrapModel).toHaveBeenCalledTimes(2);
+		expect(wrapTools).toHaveBeenCalledTimes(2);
 		expect(result.finishReason).toBe("completed");
 		expect(result.text).toBe("recovered");
 		expect(
