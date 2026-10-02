@@ -9,8 +9,8 @@ function createMetrics() {
 	const events: MetricEvent[] = [];
 	const onFailure = vi.fn();
 	const relay = {
-		MetricKind: { Counter: 0, Histogram: 3 },
-		MetricValueType: { U64: 0, F64: 2 },
+		MetricKind: { Counter: 0, UpDownCounter: 1, Histogram: 3 },
+		MetricValueType: { U64: 0, I64: 1, F64: 2 },
 		metric: vi.fn((name: string, measurements: RelayMeasurement[]) => {
 			events.push({ name, measurements });
 		}),
@@ -88,5 +88,25 @@ describe("RunMetrics model measurements", () => {
 			}),
 		).not.toThrow();
 		expect(onFailure).toHaveBeenCalledOnce();
+	});
+});
+
+describe("RunMetrics tool measurements", () => {
+	it("tracks concurrent activity and bounded outcomes", () => {
+		const { events, metrics } = createMetrics();
+		metrics.toolStarted();
+		metrics.toolStarted();
+		metrics.toolCompleted("failed", 2_000);
+		metrics.toolCompleted("completed", 500);
+
+		expect(
+			events
+				.filter(({ name }) => name === "cline.agent.tool.active")
+				.flatMap(({ measurements }) => measurements.map(({ value }) => value)),
+		).toEqual([1, 1, -1, -1]);
+		expect(
+			events.find(({ name }) => name === "cline.agent.tool.completed")
+				?.measurements[0]?.attributes,
+		).toMatchObject({ outcome: "failed" });
 	});
 });

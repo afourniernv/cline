@@ -34,6 +34,8 @@ interface MetricSpec {
 }
 
 export class RunMetrics {
+	private activeTools = 0;
+
 	constructor(
 		private readonly relay: RelayModule,
 		private readonly parent: RelayScopeHandle,
@@ -86,6 +88,28 @@ export class RunMetrics {
 		this.emit("cline.agent.model.completed", metrics, attributes);
 	}
 
+	toolStarted(): void {
+		this.activeTools += 1;
+		this.emit("cline.agent.tool.active", [
+			upDown("cline.agent.active_tools", 1),
+		]);
+	}
+
+	toolCompleted(outcome: "completed" | "failed", durationMs: number): void {
+		this.activeTools = Math.max(0, this.activeTools - 1);
+		this.emit("cline.agent.tool.active", [
+			upDown("cline.agent.active_tools", -1),
+		]);
+		this.emit(
+			"cline.agent.tool.completed",
+			[
+				counter("cline.agent.tool.executions"),
+				seconds("cline.agent.tool.duration", durationMs),
+			],
+			{ outcome },
+		);
+	}
+
 	private emit(
 		name: string,
 		metrics: MetricSpec[],
@@ -130,6 +154,10 @@ function seconds(name: string, durationMs: number): MetricSpec {
 		value: Math.max(0, durationMs) / 1_000,
 		unit: "s",
 	};
+}
+
+function upDown(name: string, value: 1 | -1): MetricSpec {
+	return { name, kind: "UpDownCounter", valueType: "I64", value };
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {

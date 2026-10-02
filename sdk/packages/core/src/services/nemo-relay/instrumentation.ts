@@ -374,12 +374,16 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		let output: unknown;
 		let executionFailed = false;
 		let executionError: unknown;
+		const startedAt = performance.now();
+		this.metrics.toolStarted();
 		try {
 			output = await tool.execute.call(tool, input, context);
 		} catch (error) {
 			outcome = "failed";
 			executionFailed = true;
 			executionError = error;
+		} finally {
+			this.metrics.toolCompleted(outcome, performance.now() - startedAt);
 		}
 
 		if (executionFailed) {
