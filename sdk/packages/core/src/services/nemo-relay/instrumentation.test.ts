@@ -96,6 +96,16 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.model.completed",
 		);
+		const modelCompleted = harness.metrics.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(modelCompleted?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.model.time_to_first_event",
+				}),
+			]),
+		);
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.tool.completed",
 		);
@@ -198,6 +208,36 @@ describe("NemoRelay runtime instrumentation", () => {
 
 		expect([fastClosed, slowClosed]).toEqual([1, 1]);
 		expect(harness.llmEnds).toHaveLength(2);
+		expect(
+			harness.metrics
+				.filter(({ name }) => name === "cline.agent.model.active")
+				.flatMap(({ measurements }) =>
+					(measurements as Array<{ value: number }>).map(({ value }) => value),
+				),
+		).toEqual([1, 1, -1, -1]);
+	});
+
+	it("omits first-event latency for an empty model stream", async () => {
+		const harness = createRelayHarness({ configured: true });
+
+		await observeWithHarness(harness, async (instrumentation) => {
+			if (!instrumentation) throw new Error("expected Relay instrumentation");
+			await drainModel(
+				instrumentation.wrapModel({ async *stream() {} }, "provider", "empty"),
+			);
+			return agentResult();
+		});
+
+		const completed = harness.metrics.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(completed?.measurements).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.model.time_to_first_event",
+				}),
+			]),
+		);
 	});
 
 	it("bounds tool names and call IDs without changing the executed tool", async () => {
