@@ -198,9 +198,12 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		let completed = false;
 		let failed = false;
 		const startedAt = performance.now();
+		let timeToFirstEventMs: number | undefined;
+		this.metrics.modelStarted();
 		try {
 			const stream = await model.stream(request);
 			for await (const event of stream) {
+				timeToFirstEventMs ??= performance.now() - startedAt;
 				switch (event.type) {
 					case "text-delta": {
 						const next = boundedText(text, event.text);
@@ -293,6 +296,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 			this.metrics.modelCompleted({
 				outcome,
 				durationMs: performance.now() - startedAt,
+				timeToFirstEventMs,
 				usage,
 				toolCallCount: toolCallIds.size,
 				errorClass: boundedErrorClass,
@@ -377,7 +381,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		if (projectedInput.omissionReason) {
 			this.metrics.omission("tool", projectedInput.omissionReason);
 		}
-		let outcome: "completed" | "failed" = "completed";
+		let callbackOutcome: "returned" | "threw" = "returned";
 		let output: unknown;
 		let executionFailed = false;
 		let executionError: unknown;
@@ -386,11 +390,14 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		try {
 			output = await tool.execute.call(tool, input, context);
 		} catch (error) {
-			outcome = "failed";
+			callbackOutcome = "threw";
 			executionFailed = true;
 			executionError = error;
 		} finally {
-			this.metrics.toolCompleted(outcome, performance.now() - startedAt);
+			this.metrics.toolCompleted(
+				callbackOutcome,
+				performance.now() - startedAt,
+			);
 		}
 
 		if (executionFailed) {
