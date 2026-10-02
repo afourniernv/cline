@@ -14,6 +14,7 @@ import {
 } from "./approvals";
 import { configureConnectorCliLaunch } from "./connectors";
 import { workspaceRoot } from "./deps";
+import { disposeRoutineSchedules } from "./schedules";
 import {
 	formatClientDetails,
 	formatSessionCreator,
@@ -23,7 +24,14 @@ import {
 import type { HubContext } from "./state";
 import { broadcastHubState } from "./state-payloads";
 import type { SessionContext } from "./types";
-import { asRecord, asString, basename, clientMetadata, isActiveSession, isVisibleClient } from "./utils";
+import {
+	asRecord,
+	asString,
+	basename,
+	clientMetadata,
+	isActiveSession,
+	isVisibleClient,
+} from "./utils";
 
 export async function syncHubHealth(ctx: HubContext): Promise<void> {
 	if (!ctx.hubUrl) {
@@ -243,6 +251,11 @@ export async function detachHub(ctx: HubContext): Promise<void> {
 	ctx.uiClient = undefined;
 	try {
 		await ctx.cline?.dispose();
+	} catch {
+		// ignore
+	}
+	try {
+		await disposeRoutineSchedules();
 	} catch {
 		// ignore
 	}

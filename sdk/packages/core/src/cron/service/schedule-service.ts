@@ -72,6 +72,8 @@ export interface HubScheduleRuntimeHandlers {
 	}>;
 	abortSession(sessionId: string): Promise<{ applied: boolean }>;
 	stopSession(sessionId: string): Promise<{ applied: boolean }>;
+	/** Called once by the owning schedule server at shutdown; must be idempotent. */
+	dispose?(): Promise<void>;
 }
 
 export interface ActiveScheduledExecution {

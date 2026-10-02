@@ -46,7 +46,7 @@ export function registerScheduleCommands(
 				const active = await client.getActiveScheduledExecutions();
 				emitJsonOrText(!!opts.json, io, active);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -123,7 +123,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, created);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -151,7 +151,7 @@ export function registerScheduleCommands(
 				emitJsonOrText(!!opts.json, io, { deleted });
 				if (!deleted) fail();
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -183,7 +183,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, result);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -216,7 +216,7 @@ export function registerScheduleCommands(
 				});
 				emitJsonOrText(!!opts.json, io, executions);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -255,7 +255,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, schedules);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -287,7 +287,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, result);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -319,7 +319,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, result);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -346,7 +346,7 @@ export function registerScheduleCommands(
 				const stats = await client.getScheduleStats(scheduleId);
 				emitJsonOrText(!!opts.json, io, stats);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -378,7 +378,7 @@ export function registerScheduleCommands(
 				}
 				emitJsonOrText(!!opts.json, io, execution);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);
@@ -407,7 +407,7 @@ export function registerScheduleCommands(
 				);
 				emitJsonOrText(!!opts.json, io, runs);
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}),
 	);

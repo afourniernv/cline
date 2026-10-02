@@ -116,14 +116,24 @@ export class HubScheduleClient {
 }
 
 export class LocalScheduleClient {
+	private readonly runtimeHandlers = createLocalHubScheduleRuntimeHandlers();
 	private readonly service = new HubScheduleService({
-		runtimeHandlers: createLocalHubScheduleRuntimeHandlers(),
+		runtimeHandlers: this.runtimeHandlers,
 	});
 	private readonly commands = new HubScheduleCommandService(this.service);
 	constructor(private readonly workspaceRoot: string) {}
 
-	close(): void {
-		void this.service.dispose();
+	async close(): Promise<void> {
+		for (const dispose of [
+			() => this.service.dispose(),
+			() => this.runtimeHandlers.dispose?.(),
+		]) {
+			try {
+				await dispose();
+			} catch {
+				// Schedule commands keep teardown best effort.
+			}
+		}
 	}
 
 	private async command(

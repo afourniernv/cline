@@ -794,11 +794,19 @@ export class HubServerTransport implements NativeHubTransport {
 			() => true,
 			"Hub shutting down before capability request was resolved.",
 		);
-		await this.cloud.dispose();
-		await this.sessionSearch.dispose();
-		await this.tasks.dispose();
-		await this.sessionHost.dispose("hub_server_stop");
-		await this.schedules.dispose();
+		const stopErrors: unknown[] = [];
+		const attempt = async (dispose: () => void | Promise<void>) => {
+			try {
+				await dispose();
+			} catch (error) {
+				stopErrors.push(error);
+			}
+		};
+		await attempt(() => this.cloud.dispose());
+		await attempt(() => this.sessionSearch.dispose());
+		await attempt(() => this.tasks.dispose());
+		await attempt(() => this.sessionHost.dispose("hub_server_stop"));
+		await attempt(() => this.schedules.dispose());
 		if (this.cronService) {
 			try {
 				await this.cronService.dispose();
@@ -806,11 +814,13 @@ export class HubServerTransport implements NativeHubTransport {
 				console.error("[hub] cron service stop failed", err);
 			}
 		}
-		this.eventLog?.close();
+		await attempt(() => this.options.runtimeHandlers.dispose?.());
+		await attempt(() => this.eventLog?.close());
 		this.eventLog = undefined;
-		this.runQueue?.close();
+		await attempt(() => this.runQueue?.close());
 		this.runQueue = undefined;
 		this.runExecutor = undefined;
+		if (stopErrors.length > 0) throw stopErrors[0];
 	}
 
 	private readonly oauthConnectionOwners = new WeakMap<
