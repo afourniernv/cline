@@ -266,6 +266,9 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(JSON.stringify(harness.llmEnds)).toContain(
 			"tool_call_count_truncated",
 		);
+		expect(JSON.stringify(harness.metrics)).toContain(
+			'"reason":"redacted_reasoning_not_projected"',
+		);
 	});
 
 	it("records actual tool execution when starting Relay observation fails", async () => {
