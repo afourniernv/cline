@@ -130,3 +130,40 @@ describe("RunMetrics coverage measurements", () => {
 		});
 	});
 });
+
+describe("RunMetrics run measurements", () => {
+	it("rolls up model attempts and peak tool concurrency", () => {
+		const { events, metrics } = createMetrics();
+		metrics.modelCompleted({
+			outcome: "completed",
+			durationMs: 1,
+			toolCallCount: 0,
+		});
+		metrics.toolStarted();
+		metrics.toolStarted();
+		metrics.toolCompleted("completed", 1);
+		metrics.toolCompleted("completed", 1);
+		metrics.runCompleted({
+			outcome: "completed",
+			durationMs: 3_000,
+			iterations: 2,
+		});
+
+		const run = events.find(({ name }) => name === "cline.agent.run.completed");
+		expect(run?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.run.model_attempts",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.peak_active_tools",
+					value: 2,
+				}),
+			]),
+		);
+		expect(run?.measurements[0]?.attributes).toMatchObject({
+			outcome: "completed",
+		});
+	});
+});

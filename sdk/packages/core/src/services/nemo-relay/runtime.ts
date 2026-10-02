@@ -482,6 +482,7 @@ export class NemoRelayRuntimeManager {
 				error: errorSummary(error),
 			});
 		});
+		const startedAt = performance.now();
 
 		let result: T | undefined;
 		let threw = false;
@@ -495,6 +496,11 @@ export class NemoRelayRuntimeManager {
 			throw error;
 		} finally {
 			const outcome = taskOutcome(result, threw);
+			metrics.runCompleted({
+				outcome,
+				durationMs: performance.now() - startedAt,
+				iterations: result?.iterations,
+			});
 			try {
 				relay.popScope(handle, { outcome }, null, {
 					...(outcome === "completed"
