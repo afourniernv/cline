@@ -99,6 +99,9 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.tool.completed",
 		);
+		expect(harness.metrics.map(({ name }) => name)).toContain(
+			"cline.agent.run.completed",
+		);
 	});
 
 	it("tracks overlapping post-approval tool executions", async () => {

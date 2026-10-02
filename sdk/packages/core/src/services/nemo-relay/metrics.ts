@@ -15,6 +15,7 @@ type ModelOutcome =
 	| "filtered"
 	| "interrupted"
 	| "limited";
+type RunOutcome = "completed" | "aborted" | "limited" | "failed";
 
 interface ModelMetricInput {
 	outcome: ModelOutcome;
@@ -36,6 +37,8 @@ interface MetricSpec {
 
 export class RunMetrics {
 	private activeTools = 0;
+	private peakActiveTools = 0;
+	private modelAttempts = 0;
 
 	constructor(
 		private readonly relay: RelayModule,
@@ -45,6 +48,7 @@ export class RunMetrics {
 	) {}
 
 	modelCompleted(input: ModelMetricInput): void {
+		this.modelAttempts += 1;
 		const attributes = {
 			outcome: input.outcome,
 			...(input.errorClass ? { error_class: input.errorClass } : {}),
@@ -91,6 +95,7 @@ export class RunMetrics {
 
 	toolStarted(): void {
 		this.activeTools += 1;
+		this.peakActiveTools = Math.max(this.peakActiveTools, this.activeTools);
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", 1),
 		]);
@@ -120,6 +125,30 @@ export class RunMetrics {
 			[counter("cline.agent.observation.omissions")],
 			{ operation, reason },
 		);
+	}
+
+	runCompleted(input: {
+		outcome: RunOutcome;
+		durationMs: number;
+		iterations?: number;
+	}): void {
+		const metrics: MetricSpec[] = [
+			counter("cline.agent.runs"),
+			seconds("cline.agent.run.duration", input.durationMs),
+			integerHistogram("cline.agent.run.model_attempts", this.modelAttempts),
+			integerHistogram(
+				"cline.agent.run.peak_active_tools",
+				this.peakActiveTools,
+			),
+		];
+		if (isNonNegativeSafeInteger(input.iterations)) {
+			metrics.push(
+				integerHistogram("cline.agent.run.iterations", input.iterations),
+			);
+		}
+		this.emit("cline.agent.run.completed", metrics, {
+			outcome: input.outcome,
+		});
 	}
 
 	private emit(
@@ -172,6 +201,14 @@ function upDown(name: string, value: 1 | -1): MetricSpec {
 	return { name, kind: "UpDownCounter", valueType: "I64", value };
 }
 
+function integerHistogram(name: string, value: number): MetricSpec {
+	return { name, kind: "Histogram", valueType: "U64", value };
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function isPositiveSafeInteger(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+	return isNonNegativeSafeInteger(value) && value > 0;
 }

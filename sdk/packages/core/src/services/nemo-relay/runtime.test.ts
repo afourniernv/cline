@@ -99,6 +99,7 @@ describe("NemoRelayRuntimeManager", () => {
 			metadata: { "otel.status_code": "ERROR" },
 		});
 		expect(JSON.stringify(harness.popped)).not.toContain(canary);
+		expect(JSON.stringify(harness.metrics)).not.toContain(canary);
 		await owner.release();
 	});
 
