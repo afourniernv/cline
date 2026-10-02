@@ -234,6 +234,48 @@ describe("LocalRuntimeHost", () => {
 		await manager.dispose();
 	});
 
+	it("does not create a session after disposal wins a concurrent start", async () => {
+		const shutdown = vi.fn(async () => undefined);
+		let finishBuild!: (value: {
+			tools: never[];
+			shutdown: () => Promise<void>;
+		}) => void;
+		const build = vi.fn(
+			() =>
+				new Promise<{
+					tools: never[];
+					shutdown: () => Promise<void>;
+				}>((resolve) => {
+					finishBuild = resolve;
+				}),
+		);
+		const createAgent = vi.fn();
+		const manager = new RuntimeHostUnderTest({
+			distinctId,
+			sessionService: new FileSessionService(
+				join(isolatedHomeDir, "sessions-dispose-race"),
+			),
+			runtimeBuilder: { build } as never,
+			createAgent,
+		});
+
+		const starting = manager.startSession(
+			normalizeStartInput({
+				config: createConfig({ sessionId: "session-dispose-race" }),
+				prompt: "hello",
+			}),
+		);
+		await vi.waitFor(() => expect(build).toHaveBeenCalledOnce());
+		await manager.dispose();
+		finishBuild({ tools: [], shutdown });
+
+		await expect(starting).rejects.toThrow(
+			"LocalRuntimeHost has been disposed",
+		);
+		expect(createAgent).not.toHaveBeenCalled();
+		expect(shutdown).toHaveBeenCalledWith("session_manager_dispose");
+	});
+
 	it.each([
 		{ source: "generated", requestedSessionId: undefined },
 		{ source: "requested", requestedSessionId: "session-explicit" },

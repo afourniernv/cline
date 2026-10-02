@@ -519,6 +519,6 @@ export async function runScheduleWizard(): Promise<number> {
 		p.outro("Done");
 		return 0;
 	} finally {
-		client.close();
+		await client.close();
 	}
 }

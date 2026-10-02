@@ -11,17 +11,37 @@ import {
 } from "@cline/shared";
 import { asTrimmedString, toPositiveInt } from "./utils";
 
-let scheduleService: HubScheduleService | undefined;
-let scheduleCommands: HubScheduleCommandService | undefined;
+let routineSchedules:
+	| {
+			service: HubScheduleService;
+			commands: HubScheduleCommandService;
+			runtimeHandlers: ReturnType<typeof createLocalHubScheduleRuntimeHandlers>;
+	  }
+	| undefined;
 
 function getCommands(): HubScheduleCommandService {
-	if (!scheduleService || !scheduleCommands) {
-		scheduleService = new HubScheduleService({
-			runtimeHandlers: createLocalHubScheduleRuntimeHandlers(),
+	if (!routineSchedules) {
+		const runtimeHandlers = createLocalHubScheduleRuntimeHandlers();
+		const service = new HubScheduleService({
+			runtimeHandlers,
 		});
-		scheduleCommands = new HubScheduleCommandService(scheduleService);
+		routineSchedules = {
+			service,
+			commands: new HubScheduleCommandService(service),
+			runtimeHandlers,
+		};
 	}
-	return scheduleCommands;
+	return routineSchedules.commands;
+}
+
+export async function disposeRoutineSchedules(): Promise<void> {
+	const owned = routineSchedules;
+	routineSchedules = undefined;
+	try {
+		await owned?.service.dispose();
+	} finally {
+		await owned?.runtimeHandlers.dispose?.();
+	}
 }
 
 async function clientCommand(
