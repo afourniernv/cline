@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { DefaultToolNames } from "../../extensions/tools/constants";
 import type { RelayMeasurement, RelayModule } from "./contracts";
 import { RunMetrics } from "./metrics";
 import { runContext } from "./test-support";
@@ -110,8 +109,8 @@ describe("RunMetrics tool measurements", () => {
 		const { events, metrics } = createMetrics();
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("private-one", "threw", 2_000);
-		metrics.toolCompleted("private-two", "returned", 500);
+		metrics.toolCompleted("threw", 2_000);
+		metrics.toolCompleted("returned", 500);
 
 		expect(
 			events
@@ -165,8 +164,8 @@ describe("RunMetrics run measurements", () => {
 		});
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("one", "returned", 1);
-		metrics.toolCompleted("two", "threw", 1);
+		metrics.toolCompleted("returned", 1);
+		metrics.toolCompleted("threw", 1);
 		metrics.runCompleted({
 			outcome: "completed",
 			durationMs: 3_000,
@@ -217,25 +216,89 @@ describe("RunMetrics run measurements", () => {
 			outcome: "completed",
 		});
 	});
+
+	it("omits run usage totals when any model call lacks that usage", () => {
+		const { events, metrics } = createMetrics();
+		metrics.modelCompleted({
+			outcome: "completed",
+			durationMs: 1,
+			usage: { inputTokens: 3, totalCost: 0.25 },
+			toolCallCount: 0,
+		});
+		metrics.modelCompleted({
+			outcome: "completed",
+			durationMs: 1,
+			usage: { outputTokens: 2 },
+			toolCallCount: 0,
+		});
+		metrics.runCompleted({ outcome: "completed", durationMs: 1 });
+
+		const names = events
+			.find(({ name }) => name === "cline.agent.run.completed")
+			?.measurements.map(({ name }) => name);
+		expect(names).not.toContain("cline.agent.run.tokens");
+		expect(names).not.toContain("cline.agent.run.cost");
+	});
 });
 
 describe("RunMetrics skill associations", () => {
-	it("associates runs with bounded skills-tool usage", () => {
+	it("associates typed skill resolution without exporting identities", () => {
 		const { events, metrics } = createMetrics();
-		metrics.toolStarted();
-		metrics.toolCompleted(DefaultToolNames.SKILLS, "completed", 1);
+		metrics.skillsAvailable(2);
+		metrics.skillInvoked({ outcome: "resolved", source: "agent_plugin" });
+		metrics.skillInvoked({ outcome: "disabled" });
+		metrics.runCompleted({ outcome: "completed", durationMs: 1 });
+
+		const invocations = events.filter(
+			({ name }) => name === "cline.agent.skill.invocation",
+		);
+		expect(invocations).toHaveLength(2);
+		expect(invocations[0]?.measurements[0]?.attributes).toMatchObject({
+			outcome: "resolved",
+			skill_source: "agent_plugin",
+		});
+		const run = events.find(({ name }) => name === "cline.agent.run.completed");
+		expect(run?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.run.available_skills",
+					value: 2,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skill_invocations",
+					value: 2,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_resolved",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_unresolved",
+					value: 1,
+				}),
+			]),
+		);
+	});
+
+	it("counts unclassified skill calls without claiming resolution", () => {
+		const { events, metrics } = createMetrics();
+		metrics.skillInvoked({ outcome: "unclassified" });
 		metrics.runCompleted({ outcome: "completed", durationMs: 1 });
 
 		const run = events.find(({ name }) => name === "cline.agent.run.completed");
 		expect(run?.measurements).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
-					name: "cline.agent.run.skills_tool_calls",
+					name: "cline.agent.run.skill_invocations",
 					value: 1,
-					attributes: expect.objectContaining({
-						invoked_skills_tool: true,
-					}),
 				}),
+			]),
+		);
+		expect(run?.measurements.map(({ name }) => name)).not.toEqual(
+			expect.arrayContaining([
+				"cline.agent.run.available_skills",
+				"cline.agent.run.skills_resolved",
+				"cline.agent.run.skills_unresolved",
 			]),
 		);
 	});

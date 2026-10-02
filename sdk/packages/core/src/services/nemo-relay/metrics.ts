@@ -1,5 +1,5 @@
 import type { AgentUsage, ProviderErrorClass } from "@cline/shared";
-import { DefaultToolNames } from "../../extensions/tools/constants";
+import type { SkillInvocationObservation } from "../../extensions/tools/skill-invocation";
 import type {
 	NemoRelayRunContext,
 	RelayJson,
@@ -51,9 +51,13 @@ export class RunMetrics {
 	private activeTools = 0;
 	private peakActiveTools = 0;
 	private modelCalls = 0;
-	private skillToolCalls = 0;
 	private toolExecutions = 0;
 	private toolCallbackFailures = 0;
+	private availableSkills: number | undefined;
+	private skillInvocations = 0;
+	private skillsResolved = 0;
+	private skillsUnresolved = 0;
+	private unclassifiedSkillInvocations = 0;
 	private readonly runTokens: Partial<Record<TokenType, number>> = {};
 	private readonly invalidRunTokenTypes = new Set<TokenType>();
 	private runCost = 0;
@@ -137,12 +141,10 @@ export class RunMetrics {
 	}
 
 	toolCompleted(
-		toolName: string,
 		callbackOutcome: "returned" | "threw",
 		durationMs: number,
 	): void {
 		this.activeTools = Math.max(0, this.activeTools - 1);
-		if (toolName === DefaultToolNames.SKILLS) this.skillToolCalls += 1;
 		if (callbackOutcome === "threw") this.toolCallbackFailures += 1;
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", -1),
@@ -154,6 +156,29 @@ export class RunMetrics {
 				seconds("cline.agent.tool.duration", durationMs),
 			],
 			{ callback_outcome: callbackOutcome },
+		);
+	}
+
+	skillsAvailable(count: number): void {
+		if (isNonNegativeSafeInteger(count)) this.availableSkills = count;
+	}
+
+	skillInvoked(observation: SkillInvocationObservation): void {
+		this.skillInvocations += 1;
+		if (observation.outcome === "resolved") {
+			this.skillsResolved += 1;
+		} else if (observation.outcome === "unclassified") {
+			this.unclassifiedSkillInvocations += 1;
+		} else {
+			this.skillsUnresolved += 1;
+		}
+		this.emit(
+			"cline.agent.skill.invocation",
+			[counter("cline.agent.skill.invocations")],
+			{
+				outcome: observation.outcome,
+				...(observation.source ? { skill_source: observation.source } : {}),
+			},
 		);
 	}
 
@@ -193,16 +218,42 @@ export class RunMetrics {
 				"cline.agent.run.peak_active_tools",
 				this.peakActiveTools,
 			),
-			integerHistogram(
-				"cline.agent.run.skills_tool_calls",
-				this.skillToolCalls,
-			),
 			integerHistogram("cline.agent.run.tool_executions", this.toolExecutions),
 			integerHistogram(
 				"cline.agent.run.tool_callback_failures",
 				this.toolCallbackFailures,
 			),
 		];
+		const hasSkillSurface =
+			this.availableSkills !== undefined || this.skillInvocations > 0;
+		if (hasSkillSurface) {
+			metrics.push(
+				integerHistogram(
+					"cline.agent.run.skill_invocations",
+					this.skillInvocations,
+				),
+			);
+			if (this.availableSkills !== undefined) {
+				metrics.push(
+					integerHistogram(
+						"cline.agent.run.available_skills",
+						this.availableSkills,
+					),
+				);
+			}
+			if (this.unclassifiedSkillInvocations === 0) {
+				metrics.push(
+					integerHistogram(
+						"cline.agent.run.skills_resolved",
+						this.skillsResolved,
+					),
+					integerHistogram(
+						"cline.agent.run.skills_unresolved",
+						this.skillsUnresolved,
+					),
+				);
+			}
+		}
 		for (const [tokenType] of TOKEN_USAGE_FIELDS) {
 			const value = this.runTokens[tokenType];
 			if (value !== undefined) {
@@ -227,19 +278,18 @@ export class RunMetrics {
 				integerHistogram("cline.agent.run.iterations", input.iterations),
 			);
 		}
-		this.emit("cline.agent.run.completed", metrics, {
-			outcome: input.outcome,
-			invoked_skills_tool: this.skillToolCalls > 0,
-		});
+		this.emit("cline.agent.run.completed", metrics, { outcome: input.outcome });
 	}
 
 	private accumulateRunUsage(usage: Partial<AgentUsage> | undefined): void {
 		for (const [tokenType, field] of TOKEN_USAGE_FIELDS) {
 			const value = usage?.[field];
-			if (
-				!isNonNegativeSafeInteger(value) ||
-				this.invalidRunTokenTypes.has(tokenType)
-			) {
+			if (this.invalidRunTokenTypes.has(tokenType)) {
+				continue;
+			}
+			if (!isNonNegativeSafeInteger(value)) {
+				delete this.runTokens[tokenType];
+				this.invalidRunTokenTypes.add(tokenType);
 				continue;
 			}
 			const total = (this.runTokens[tokenType] ?? 0) + value;
@@ -252,15 +302,17 @@ export class RunMetrics {
 		}
 
 		const cost = usage?.totalCost;
-		if (
-			!this.runCostInvalid &&
-			typeof cost === "number" &&
-			Number.isFinite(cost) &&
-			cost >= 0
-		) {
-			this.hasRunCost = true;
-			this.runCost += cost;
-			if (!Number.isFinite(this.runCost)) this.runCostInvalid = true;
+		if (this.runCostInvalid) return;
+		if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) {
+			this.runCostInvalid = true;
+			this.hasRunCost = false;
+			return;
+		}
+		this.hasRunCost = true;
+		this.runCost += cost;
+		if (!Number.isFinite(this.runCost)) {
+			this.runCostInvalid = true;
+			this.hasRunCost = false;
 		}
 	}
 
