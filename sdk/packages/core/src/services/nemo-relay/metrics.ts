@@ -20,6 +20,7 @@ type RunOutcome = "completed" | "aborted" | "limited" | "failed";
 interface ModelMetricInput {
 	outcome: ModelOutcome;
 	durationMs: number;
+	timeToFirstEventMs?: number;
 	usage?: Partial<AgentUsage>;
 	toolCallCount: number;
 	errorClass?: ProviderErrorClass;
@@ -35,10 +36,28 @@ interface MetricSpec {
 	attributes?: Record<string, RelayJson>;
 }
 
+const TOKEN_USAGE_FIELDS = [
+	["input", "inputTokens"],
+	["output", "outputTokens"],
+	["cache_read", "cacheReadTokens"],
+	["cache_write", "cacheWriteTokens"],
+	["reasoning", "reasoningTokenCount"],
+] as const;
+
+type TokenType = (typeof TOKEN_USAGE_FIELDS)[number][0];
+
 export class RunMetrics {
 	private activeTools = 0;
 	private peakActiveTools = 0;
-	private modelAttempts = 0;
+	private modelCalls = 0;
+	private toolExecutions = 0;
+	private toolCallbackFailures = 0;
+	private readonly runTokens: Partial<Record<TokenType, number>> = {};
+	private readonly invalidRunTokenTypes = new Set<TokenType>();
+	private runCost = 0;
+	private hasRunCost = false;
+	private runCostInvalid = false;
+	private runActive = false;
 
 	constructor(
 		private readonly relay: RelayModule,
@@ -47,8 +66,18 @@ export class RunMetrics {
 		private readonly onFailure: (error: unknown) => void,
 	) {}
 
+	modelStarted(): void {
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", 1),
+		]);
+	}
+
 	modelCompleted(input: ModelMetricInput): void {
-		this.modelAttempts += 1;
+		this.modelCalls += 1;
+		this.accumulateRunUsage(input.usage);
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", -1),
+		]);
 		const attributes = {
 			outcome: input.outcome,
 			...(input.errorClass ? { error_class: input.errorClass } : {}),
@@ -60,13 +89,16 @@ export class RunMetrics {
 			counter("cline.agent.model.calls"),
 			seconds("cline.agent.model.duration", input.durationMs),
 		];
-		for (const [tokenType, value] of [
-			["input", input.usage?.inputTokens],
-			["output", input.usage?.outputTokens],
-			["cache_read", input.usage?.cacheReadTokens],
-			["cache_write", input.usage?.cacheWriteTokens],
-			["reasoning", input.usage?.reasoningTokenCount],
-		] as const) {
+		if (isNonNegativeFinite(input.timeToFirstEventMs)) {
+			metrics.push(
+				seconds(
+					"cline.agent.model.time_to_first_event",
+					input.timeToFirstEventMs,
+				),
+			);
+		}
+		for (const [tokenType, field] of TOKEN_USAGE_FIELDS) {
+			const value = input.usage?.[field];
 			if (isPositiveSafeInteger(value)) {
 				metrics.push(
 					counter("cline.agent.model.tokens", value, "{token}", {
@@ -95,14 +127,19 @@ export class RunMetrics {
 
 	toolStarted(): void {
 		this.activeTools += 1;
+		this.toolExecutions += 1;
 		this.peakActiveTools = Math.max(this.peakActiveTools, this.activeTools);
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", 1),
 		]);
 	}
 
-	toolCompleted(outcome: "completed" | "failed", durationMs: number): void {
+	toolCompleted(
+		callbackOutcome: "returned" | "threw",
+		durationMs: number,
+	): void {
 		this.activeTools = Math.max(0, this.activeTools - 1);
+		if (callbackOutcome === "threw") this.toolCallbackFailures += 1;
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", -1),
 		]);
@@ -112,8 +149,14 @@ export class RunMetrics {
 				counter("cline.agent.tool.executions"),
 				seconds("cline.agent.tool.duration", durationMs),
 			],
-			{ outcome },
+			{ callback_outcome: callbackOutcome },
 		);
+	}
+
+	runStarted(): void {
+		if (this.runActive) return;
+		this.runActive = true;
+		this.emit("cline.agent.run.active", [upDown("cline.agent.active_runs", 1)]);
 	}
 
 	omission(
@@ -132,15 +175,45 @@ export class RunMetrics {
 		durationMs: number;
 		iterations?: number;
 	}): void {
+		if (this.runActive) {
+			this.runActive = false;
+			this.emit("cline.agent.run.active", [
+				upDown("cline.agent.active_runs", -1),
+			]);
+		}
 		const metrics: MetricSpec[] = [
 			counter("cline.agent.runs"),
 			seconds("cline.agent.run.duration", input.durationMs),
-			integerHistogram("cline.agent.run.model_attempts", this.modelAttempts),
+			integerHistogram("cline.agent.run.model_calls", this.modelCalls),
 			integerHistogram(
 				"cline.agent.run.peak_active_tools",
 				this.peakActiveTools,
 			),
+			integerHistogram("cline.agent.run.tool_executions", this.toolExecutions),
+			integerHistogram(
+				"cline.agent.run.tool_callback_failures",
+				this.toolCallbackFailures,
+			),
 		];
+		for (const [tokenType] of TOKEN_USAGE_FIELDS) {
+			const value = this.runTokens[tokenType];
+			if (value !== undefined) {
+				metrics.push(
+					integerHistogram("cline.agent.run.tokens", value, "{token}", {
+						token_type: tokenType,
+					}),
+				);
+			}
+		}
+		if (this.hasRunCost && !this.runCostInvalid) {
+			metrics.push({
+				name: "cline.agent.run.cost",
+				kind: "Histogram",
+				valueType: "F64",
+				value: this.runCost,
+				unit: "USD",
+			});
+		}
 		if (isNonNegativeSafeInteger(input.iterations)) {
 			metrics.push(
 				integerHistogram("cline.agent.run.iterations", input.iterations),
@@ -149,6 +222,37 @@ export class RunMetrics {
 		this.emit("cline.agent.run.completed", metrics, {
 			outcome: input.outcome,
 		});
+	}
+
+	private accumulateRunUsage(usage: Partial<AgentUsage> | undefined): void {
+		for (const [tokenType, field] of TOKEN_USAGE_FIELDS) {
+			const value = usage?.[field];
+			if (
+				!isNonNegativeSafeInteger(value) ||
+				this.invalidRunTokenTypes.has(tokenType)
+			) {
+				continue;
+			}
+			const total = (this.runTokens[tokenType] ?? 0) + value;
+			if (Number.isSafeInteger(total)) {
+				this.runTokens[tokenType] = total;
+			} else {
+				delete this.runTokens[tokenType];
+				this.invalidRunTokenTypes.add(tokenType);
+			}
+		}
+
+		const cost = usage?.totalCost;
+		if (
+			!this.runCostInvalid &&
+			typeof cost === "number" &&
+			Number.isFinite(cost) &&
+			cost >= 0
+		) {
+			this.hasRunCost = true;
+			this.runCost += cost;
+			if (!Number.isFinite(this.runCost)) this.runCostInvalid = true;
+		}
 	}
 
 	private emit(
@@ -201,8 +305,13 @@ function upDown(name: string, value: 1 | -1): MetricSpec {
 	return { name, kind: "UpDownCounter", valueType: "I64", value };
 }
 
-function integerHistogram(name: string, value: number): MetricSpec {
-	return { name, kind: "Histogram", valueType: "U64", value };
+function integerHistogram(
+	name: string,
+	value: number,
+	unit?: string,
+	attributes?: Record<string, RelayJson>,
+): MetricSpec {
+	return { name, kind: "Histogram", valueType: "U64", value, unit, attributes };
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
@@ -211,4 +320,8 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 
 function isPositiveSafeInteger(value: unknown): value is number {
 	return isNonNegativeSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }

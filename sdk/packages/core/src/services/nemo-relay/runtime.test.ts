@@ -53,6 +53,42 @@ describe("NemoRelayRuntimeManager", () => {
 		expect(harness.order).toEqual(["flush", "close"]);
 	});
 
+	it("balances active-run metrics across concurrent executions", async () => {
+		const harness = createRelayHarness({ configured: true });
+		const owner = managerFor(harness).acquire();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered = 0;
+		let bothEntered!: () => void;
+		const both = new Promise<void>((resolve) => {
+			bothEntered = resolve;
+		});
+		const execute = () =>
+			owner.observeRun(runContext, async () => {
+				entered += 1;
+				if (entered === 2) bothEntered();
+				await gate;
+				return agentResult();
+			});
+
+		const runs = [execute(), execute()];
+		await both;
+		const activeValues = () =>
+			harness.metrics
+				.filter(({ name }) => name === "cline.agent.run.active")
+				.flatMap(({ measurements }) =>
+					(measurements as Array<{ value: number }>).map(({ value }) => value),
+				);
+		expect(activeValues()).toEqual([1, 1]);
+
+		release();
+		await Promise.all(runs);
+		expect(activeValues()).toEqual([1, 1, -1, -1]);
+		await owner.release();
+	});
+
 	it("closes once when the final owners release together", async () => {
 		const harness = createRelayHarness({ configured: true });
 		const manager = managerFor(harness);

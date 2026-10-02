@@ -26,9 +26,11 @@ function createMetrics() {
 describe("RunMetrics model measurements", () => {
 	it("emits bounded reliability and usage dimensions", () => {
 		const { events, metrics } = createMetrics();
+		metrics.modelStarted();
 		metrics.modelCompleted({
 			outcome: "failed",
 			durationMs: 1_500,
+			timeToFirstEventMs: 250,
 			usage: {
 				inputTokens: 3,
 				outputTokens: 2,
@@ -41,11 +43,14 @@ describe("RunMetrics model measurements", () => {
 			errorRetryable: false,
 		});
 
-		const [completed] = events;
+		const completed = events.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
 		expect(completed?.name).toBe("cline.agent.model.completed");
 		expect(completed?.measurements.map(({ name }) => name)).toEqual([
 			"cline.agent.model.calls",
 			"cline.agent.model.duration",
+			"cline.agent.model.time_to_first_event",
 			"cline.agent.model.tokens",
 			"cline.agent.model.tokens",
 			"cline.agent.model.tokens",
@@ -59,6 +64,11 @@ describe("RunMetrics model measurements", () => {
 			error_class: "auth",
 			error_retryable: false,
 		});
+		expect(
+			events
+				.filter(({ name }) => name === "cline.agent.model.active")
+				.flatMap(({ measurements }) => measurements.map(({ value }) => value)),
+		).toEqual([1, -1]);
 	});
 
 	it("omits invalid counters", () => {
@@ -69,7 +79,10 @@ describe("RunMetrics model measurements", () => {
 			usage: { inputTokens: Number.NaN, outputTokens: -1, totalCost: -0.1 },
 			toolCallCount: Number.MAX_SAFE_INTEGER + 1,
 		});
-		expect(events[0]?.measurements.map(({ name }) => name)).toEqual([
+		const completed = events.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(completed?.measurements.map(({ name }) => name)).toEqual([
 			"cline.agent.model.calls",
 			"cline.agent.model.duration",
 		]);
@@ -87,7 +100,7 @@ describe("RunMetrics model measurements", () => {
 				toolCallCount: 0,
 			}),
 		).not.toThrow();
-		expect(onFailure).toHaveBeenCalledOnce();
+		expect(onFailure).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -96,8 +109,8 @@ describe("RunMetrics tool measurements", () => {
 		const { events, metrics } = createMetrics();
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("failed", 2_000);
-		metrics.toolCompleted("completed", 500);
+		metrics.toolCompleted("threw", 2_000);
+		metrics.toolCompleted("returned", 500);
 
 		expect(
 			events
@@ -107,7 +120,7 @@ describe("RunMetrics tool measurements", () => {
 		expect(
 			events.find(({ name }) => name === "cline.agent.tool.completed")
 				?.measurements[0]?.attributes,
-		).toMatchObject({ outcome: "failed" });
+		).toMatchObject({ callback_outcome: "threw" });
 	});
 });
 
@@ -132,17 +145,27 @@ describe("RunMetrics coverage measurements", () => {
 });
 
 describe("RunMetrics run measurements", () => {
-	it("rolls up model attempts and peak tool concurrency", () => {
+	it("rolls up run concurrency, model usage, and tool callbacks", () => {
 		const { events, metrics } = createMetrics();
+		metrics.runStarted();
+		metrics.modelStarted();
 		metrics.modelCompleted({
 			outcome: "completed",
 			durationMs: 1,
+			usage: { inputTokens: 3, outputTokens: 2, totalCost: 0.25 },
+			toolCallCount: 0,
+		});
+		metrics.modelStarted();
+		metrics.modelCompleted({
+			outcome: "completed",
+			durationMs: 1,
+			usage: { inputTokens: 2, outputTokens: 4, totalCost: 0.5 },
 			toolCallCount: 0,
 		});
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("completed", 1);
-		metrics.toolCompleted("completed", 1);
+		metrics.toolCompleted("returned", 1);
+		metrics.toolCompleted("threw", 1);
 		metrics.runCompleted({
 			outcome: "completed",
 			durationMs: 3_000,
@@ -153,15 +176,42 @@ describe("RunMetrics run measurements", () => {
 		expect(run?.measurements).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
-					name: "cline.agent.run.model_attempts",
-					value: 1,
+					name: "cline.agent.run.model_calls",
+					value: 2,
 				}),
 				expect.objectContaining({
 					name: "cline.agent.run.peak_active_tools",
 					value: 2,
 				}),
+				expect.objectContaining({
+					name: "cline.agent.run.tool_executions",
+					value: 2,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.tool_callback_failures",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.tokens",
+					value: 5,
+					attributes: expect.objectContaining({ token_type: "input" }),
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.tokens",
+					value: 6,
+					attributes: expect.objectContaining({ token_type: "output" }),
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.cost",
+					value: 0.75,
+				}),
 			]),
 		);
+		expect(
+			events
+				.filter(({ name }) => name === "cline.agent.run.active")
+				.flatMap(({ measurements }) => measurements.map(({ value }) => value)),
+		).toEqual([1, -1]);
 		expect(run?.measurements[0]?.attributes).toMatchObject({
 			outcome: "completed",
 		});
