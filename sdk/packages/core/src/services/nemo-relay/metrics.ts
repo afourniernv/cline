@@ -19,6 +19,7 @@ type ModelOutcome =
 interface ModelMetricInput {
 	outcome: ModelOutcome;
 	durationMs: number;
+	timeToFirstEventMs?: number;
 	usage?: Partial<AgentUsage>;
 	toolCallCount: number;
 	errorClass?: ProviderErrorClass;
@@ -44,7 +45,16 @@ export class RunMetrics {
 		private readonly onFailure: (error: unknown) => void,
 	) {}
 
+	modelStarted(): void {
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", 1),
+		]);
+	}
+
 	modelCompleted(input: ModelMetricInput): void {
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", -1),
+		]);
 		const attributes = {
 			outcome: input.outcome,
 			...(input.errorClass ? { error_class: input.errorClass } : {}),
@@ -56,6 +66,14 @@ export class RunMetrics {
 			counter("cline.agent.model.calls"),
 			seconds("cline.agent.model.duration", input.durationMs),
 		];
+		if (isNonNegativeFinite(input.timeToFirstEventMs)) {
+			metrics.push(
+				seconds(
+					"cline.agent.model.time_to_first_event",
+					input.timeToFirstEventMs,
+				),
+			);
+		}
 		for (const [tokenType, value] of [
 			["input", input.usage?.inputTokens],
 			["output", input.usage?.outputTokens],
@@ -96,7 +114,10 @@ export class RunMetrics {
 		]);
 	}
 
-	toolCompleted(outcome: "completed" | "failed", durationMs: number): void {
+	toolCompleted(
+		callbackOutcome: "returned" | "threw",
+		durationMs: number,
+	): void {
 		this.activeTools = Math.max(0, this.activeTools - 1);
 		this.emit("cline.agent.tool.active", [
 			upDown("cline.agent.active_tools", -1),
@@ -107,7 +128,7 @@ export class RunMetrics {
 				counter("cline.agent.tool.executions"),
 				seconds("cline.agent.tool.duration", durationMs),
 			],
-			{ outcome },
+			{ callback_outcome: callbackOutcome },
 		);
 	}
 
@@ -170,6 +191,10 @@ function seconds(name: string, durationMs: number): MetricSpec {
 
 function upDown(name: string, value: 1 | -1): MetricSpec {
 	return { name, kind: "UpDownCounter", valueType: "I64", value };
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {
