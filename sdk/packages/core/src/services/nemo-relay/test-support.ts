@@ -55,6 +55,7 @@ export function createRelayHarness(
 	const pushed: Array<{ name: string; handle: object }> = [];
 	const popped: Array<{ handle: object; output: unknown; metadata: unknown }> =
 		[];
+	const metrics: Array<{ name: string; measurements: unknown[] }> = [];
 	const llmStarts: unknown[][] = [];
 	const llmEnds: unknown[][] = [];
 	const toolStarts: unknown[][] = [];
@@ -113,6 +114,8 @@ export function createRelayHarness(
 	}));
 	const relay = {
 		ScopeType: { Agent: 0 },
+		MetricKind: { Counter: 0, Histogram: 3 },
+		MetricValueType: { U64: 0, F64: 2 },
 		scopeStackActive: vi.fn(() => stackStorage.getStore() !== undefined),
 		capturePropagationContext: vi.fn(
 			(): HarnessPropagationContext => ({
@@ -141,6 +144,12 @@ export function createRelayHarness(
 				}
 				stack.frames.pop();
 				popped.push({ handle, output, metadata });
+			},
+		),
+		metric: vi.fn(
+			(name: string, measurements: unknown[], handle?: object | null) => {
+				validateHandleOwner("metric", handle, scopeOwners);
+				metrics.push({ name, measurements });
 			},
 		),
 		llmCall: vi.fn((...args: unknown[]) => {
@@ -192,6 +201,7 @@ export function createRelayHarness(
 		stacks,
 		pushed,
 		popped,
+		metrics,
 		llmStarts,
 		llmEnds,
 		toolStarts,

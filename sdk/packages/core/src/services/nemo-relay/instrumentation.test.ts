@@ -93,6 +93,9 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.llmEnds).toHaveLength(1);
 		expect(harness.toolStarts).toHaveLength(1);
 		expect(harness.toolEnds).toHaveLength(1);
+		expect(harness.metrics.map(({ name }) => name)).toContain(
+			"cline.agent.model.completed",
+		);
 	});
 
 	it("closes concurrent model streams once when they finish out of order", async () => {
