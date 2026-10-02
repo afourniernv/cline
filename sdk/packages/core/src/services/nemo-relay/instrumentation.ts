@@ -8,6 +8,10 @@ import type {
 	BasicLogger,
 	ProviderErrorClass,
 } from "@cline/shared";
+import {
+	availableSkillsForTool,
+	takeSkillInvocationObservation,
+} from "../../extensions/tools/skill-invocation";
 import type {
 	NemoRelayRunInstrumentation,
 	RelayModule,
@@ -124,6 +128,16 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 	}
 
 	wrapTools(tools: AgentTool[]): AgentTool[] {
+		for (const tool of tools) {
+			try {
+				const availableSkills = availableSkillsForTool(tool);
+				if (availableSkills !== undefined) {
+					this.metrics.skillsAvailable(availableSkills);
+				}
+			} catch (error) {
+				this.logFailure("read skill availability", error);
+			}
+		}
 		return tools.map((tool) => ({
 			...tool,
 			execute: (input: unknown, context: AgentToolContext) =>
@@ -394,8 +408,9 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 			executionFailed = true;
 			executionError = error;
 		} finally {
+			const skillObservation = takeSkillInvocationObservation(tool, context);
+			if (skillObservation) this.metrics.skillInvoked(skillObservation);
 			this.metrics.toolCompleted(
-				tool.name,
 				callbackOutcome,
 				performance.now() - startedAt,
 			);

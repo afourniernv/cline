@@ -2,6 +2,11 @@ import type { AgentExtension, AgentTool } from "@cline/shared";
 import { formatRulesForSystemPrompt } from "../../runtime/safety/rules";
 import { createSkillsTool, type SkillsExecutorWithMetadata } from "../tools";
 import {
+	executeSkillsWithObservation,
+	type ObservedSkillsExecutor,
+	registerObservedSkillsExecutor,
+} from "../tools/skill-invocation";
+import {
 	type AvailableRuntimeCommand,
 	listAvailableRuntimeCommandsFromWatcher,
 	normalizeRuntimeCommandName,
@@ -80,14 +85,17 @@ function createCombinedSkillsExecutor(
 				executor,
 			})),
 		);
-	const executor: SkillsExecutorWithMetadata = async (
+	const executeObserved: ObservedSkillsExecutor = async (
 		skillName,
 		args,
 		context,
 	) => {
 		const normalized = normalizeSkillToken(skillName);
 		if (!normalized) {
-			return "Missing skill name.";
+			return {
+				output: "Missing skill name.",
+				observation: { outcome: "not_found" },
+			};
 		}
 		const entries = resolveEntries();
 		const exactMatches = entries.filter(
@@ -105,22 +113,45 @@ function createCombinedSkillsExecutor(
 					});
 		const enabled = matches.filter(({ metadata }) => !metadata.disabled);
 		if (enabled.length === 1) {
-			return enabled[0].executor(enabled[0].metadata.id, args, context);
+			return executeSkillsWithObservation(
+				enabled[0].executor,
+				enabled[0].metadata.id,
+				args,
+				context,
+			);
 		}
 		if (enabled.length > 1) {
-			return `Skill "${skillName}" is ambiguous. Use one of: ${enabled.map(({ metadata }) => metadata.id).join(", ")}`;
+			return {
+				output: `Skill "${skillName}" is ambiguous. Use one of: ${enabled.map(({ metadata }) => metadata.id).join(", ")}`,
+				observation: { outcome: "ambiguous" },
+			};
 		}
 		if (matches.length > 0) {
-			return `Skill "${skillName}" is configured but disabled.`;
+			return {
+				output: `Skill "${skillName}" is configured but disabled.`,
+				observation: {
+					outcome: matches.length > 1 ? "ambiguous" : "disabled",
+				},
+			};
 		}
 		const available = entries
 			.filter(({ metadata }) => !metadata.disabled)
 			.map(({ metadata }) => metadata.id)
 			.sort((left, right) => left.localeCompare(right));
-		return available.length > 0
-			? `Skill "${skillName}" not found. Available skills: ${available.join(", ")}`
-			: "No skills are currently available.";
+		return {
+			output:
+				available.length > 0
+					? `Skill "${skillName}" not found. Available skills: ${available.join(", ")}`
+					: "No skills are currently available.",
+			observation: { outcome: "not_found" },
+		};
 	};
+	const executor: SkillsExecutorWithMetadata = async (
+		skillName,
+		args,
+		context,
+	) => (await executeObserved(skillName, args, context)).output;
+	registerObservedSkillsExecutor(executor, executeObserved);
 
 	Object.defineProperty(executor, "configuredSkills", {
 		get: () => resolveEntries().map(({ metadata }) => metadata),

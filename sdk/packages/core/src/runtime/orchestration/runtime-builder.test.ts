@@ -18,6 +18,7 @@ import { setHomeDir } from "@cline/shared/storage";
 import { afterEach, describe, expect, it } from "vitest";
 import { createUserInstructionConfigService } from "../../extensions/config";
 import { PLAN_MODE_COMMAND_GUARD_EXTENSION_NAME } from "../../extensions/tools/command-guard-extension";
+import { takeSkillInvocationObservation } from "../../extensions/tools/skill-invocation";
 import { TelemetryService } from "../../services/telemetry/TelemetryService";
 import type { CoreSessionConfig } from "../../types/config";
 import { DefaultRuntimeBuilder } from "./runtime-builder";
@@ -710,6 +711,10 @@ process.stdin.on("data", (chunk) => {
 			expect(portableResult).toContain(
 				`<skill-root>${resolvedPluginSkillRoot}</skill-root>`,
 			);
+			expect(takeSkillInvocationObservation(skillsTool, context)).toEqual({
+				outcome: "resolved",
+				source: "agent_plugin",
+			});
 			await expect(
 				skillsTool.execute({ skill: "local-review" }, context),
 			).resolves.toContain("Use local guidance.");
@@ -1121,15 +1126,19 @@ Disabled skill.`,
 			throw new Error("Expected skills tool.");
 		}
 
+		const context = {
+			agentId: "agent-1",
+			conversationId: "conv-1",
+			iteration: 1,
+		};
 		const disabledResult = await skillsTool.execute(
 			{ skill: "review" },
-			{
-				agentId: "agent-1",
-				conversationId: "conv-1",
-				iteration: 1,
-			},
+			context,
 		);
 		expect(disabledResult).toContain("configured but disabled");
+		expect(takeSkillInvocationObservation(skillsTool, context)).toEqual({
+			outcome: "disabled",
+		});
 
 		await runtime.shutdown("test");
 	});
@@ -1171,26 +1180,32 @@ Review skill.`,
 			throw new Error("Expected skills tool.");
 		}
 
-		const known = await skillsTool.execute(
-			{ skill: "commit" },
-			{
-				agentId: "agent-1",
-				conversationId: "conv-1",
-				iteration: 1,
-			},
-		);
+		const knownContext = {
+			agentId: "agent-1",
+			conversationId: "conv-1",
+			iteration: 1,
+		};
+		const known = await skillsTool.execute({ skill: "commit" }, knownContext);
 		expect(known).toContain("<command-name>commit</command-name>");
+		expect(takeSkillInvocationObservation(skillsTool, knownContext)).toEqual({
+			outcome: "resolved",
+			source: "standalone",
+		});
 
+		const blockedContext = {
+			agentId: "agent-1",
+			conversationId: "conv-1",
+			iteration: 1,
+		};
 		const blocked = await skillsTool.execute(
 			{ skill: "review" },
-			{
-				agentId: "agent-1",
-				conversationId: "conv-1",
-				iteration: 1,
-			},
+			blockedContext,
 		);
 		expect(blocked).toContain('Skill "review" not found.');
 		expect(blocked).toContain("Available skills: commit");
+		expect(takeSkillInvocationObservation(skillsTool, blockedContext)).toEqual({
+			outcome: "not_found",
+		});
 
 		await runtime.shutdown("test");
 	});
