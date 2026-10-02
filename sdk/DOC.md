@@ -41,24 +41,46 @@ boundary cannot enforce.
 
 The integration emits these measurements:
 
-- `cline.agent.runs`, `cline.agent.run.duration`,
-  `cline.agent.run.iterations`, `cline.agent.run.model_attempts`,
-  `cline.agent.run.peak_active_tools`, and
-  `cline.agent.run.skills_tool_calls`
-- `cline.agent.model.calls`, `cline.agent.model.duration`,
+- `cline.agent.runs`, `cline.agent.active_runs`,
+  `cline.agent.run.duration`, `cline.agent.run.iterations`,
+  `cline.agent.run.model_calls`, `cline.agent.run.peak_active_tools`,
+  `cline.agent.run.tool_executions`,
+  `cline.agent.run.tool_callback_failures`, `cline.agent.run.tokens`, and
+  `cline.agent.run.cost`
+- `cline.agent.model.calls`, `cline.agent.active_model_calls`,
+  `cline.agent.model.duration`, `cline.agent.model.time_to_first_event`,
   `cline.agent.model.tokens`, `cline.agent.model.cost`, and
   `cline.agent.model.tool_calls`
 - `cline.agent.tool.executions`, `cline.agent.tool.duration`, and
   `cline.agent.active_tools`
+- `cline.agent.skill.invocations`, `cline.agent.run.available_skills`,
+  `cline.agent.run.skill_invocations`, `cline.agent.run.skills_resolved`, and
+  `cline.agent.run.skills_unresolved`
 - `cline.agent.observation.omissions`
 
 Labels are limited to bounded outcome, surface, mode, agent kind, token type,
-error class, retryability, omission reason, and `invoked_skills_tool`. Provider,
-model, tool, path, session, and payload values are not metric labels.
+error class, retryability, callback outcome, skill outcome/source, and omission
+reason. Provider, model, tool, skill, path, session, and payload values are not
+metric labels.
 `cline.agent.observation.omissions` uses `operation` and `reason` to identify
 partial projection. `active_tools` counts approved Cline callbacks, not active
-sandboxes. Skill measurements show association only; they do not prove a skill
-loaded or caused the outcome. Cost is Cline's estimate, not a billing record.
+sandboxes. `active_model_calls` counts open Cline model streams, not hidden
+provider retries. `model.time_to_first_event` ends at the first stream event,
+which is not always a text token. Tool callback failures count thrown callbacks;
+a tool that returns an application-level failure still has callback outcome
+`returned`.
+
+Run token and cost totals are emitted only when every model call reports a valid
+value for that dimension. Skill measurements cover calls through Cline's skills
+tool. Cline-owned resolvers report `resolved`, `not_found`, `disabled`,
+`ambiguous`, `already_running`, or `failed`, plus the bounded source category
+`standalone` or `agent_plugin`. Custom resolvers report `unclassified`; when any
+invocation is unclassified, the run omits resolved/unresolved totals instead of
+claiming complete coverage. The available-skill count is emitted only when the
+resolver exposes that metadata. Client-side slash-command expansion used when
+the skills tool is unavailable is outside this boundary. Skill measurements
+show association only; they do not prove that a skill caused the run outcome.
+Cost is Cline's estimate, not a billing record.
 
 The final owner drains accepted runs, flushes subscribers, and closes Relay,
 with a five-second bound for each stage. Missing or unsupported Relay is
