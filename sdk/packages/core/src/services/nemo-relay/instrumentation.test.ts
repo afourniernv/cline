@@ -96,6 +96,54 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.model.completed",
 		);
+		expect(harness.metrics.map(({ name }) => name)).toContain(
+			"cline.agent.tool.completed",
+		);
+	});
+
+	it("tracks overlapping post-approval tool executions", async () => {
+		const harness = createRelayHarness({ configured: true });
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let started = 0;
+		let bothStarted!: () => void;
+		const both = new Promise<void>((resolve) => {
+			bothStarted = resolve;
+		});
+
+		await observeWithHarness(harness, async (instrumentation) => {
+			if (!instrumentation) throw new Error("expected Relay instrumentation");
+			const [tool] = instrumentation.wrapTools([
+				{
+					name: "private-tool-name",
+					description: "test",
+					inputSchema: {},
+					execute: async () => {
+						started += 1;
+						if (started === 2) bothStarted();
+						await gate;
+						return "done";
+					},
+				},
+			]);
+			const calls = ["one", "two"].map((toolCallId) =>
+				tool.execute(undefined, { agentId: "agent", iteration: 1, toolCallId }),
+			);
+			await both;
+			release();
+			await Promise.all(calls);
+			return agentResult();
+		});
+
+		const values = harness.metrics
+			.filter(({ name }) => name === "cline.agent.tool.active")
+			.flatMap(({ measurements }) =>
+				(measurements as Array<{ value: number }>).map(({ value }) => value),
+			);
+		expect(values).toEqual([1, 1, -1, -1]);
+		expect(JSON.stringify(harness.metrics)).not.toContain("private-tool-name");
 	});
 
 	it("closes concurrent model streams once when they finish out of order", async () => {

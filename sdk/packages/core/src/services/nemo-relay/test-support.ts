@@ -114,8 +114,8 @@ export function createRelayHarness(
 	}));
 	const relay = {
 		ScopeType: { Agent: 0 },
-		MetricKind: { Counter: 0, Histogram: 3 },
-		MetricValueType: { U64: 0, F64: 2 },
+		MetricKind: { Counter: 0, UpDownCounter: 1, Histogram: 3 },
+		MetricValueType: { U64: 0, I64: 1, F64: 2 },
 		scopeStackActive: vi.fn(() => stackStorage.getStore() !== undefined),
 		capturePropagationContext: vi.fn(
 			(): HarnessPropagationContext => ({
