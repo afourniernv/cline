@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DefaultToolNames } from "../../extensions/tools/constants";
 import type { RelayMeasurement, RelayModule } from "./contracts";
 import { RunMetrics } from "./metrics";
 import { runContext } from "./test-support";
@@ -96,8 +97,8 @@ describe("RunMetrics tool measurements", () => {
 		const { events, metrics } = createMetrics();
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("failed", 2_000);
-		metrics.toolCompleted("completed", 500);
+		metrics.toolCompleted("private-one", "failed", 2_000);
+		metrics.toolCompleted("private-two", "completed", 500);
 
 		expect(
 			events
@@ -141,8 +142,8 @@ describe("RunMetrics run measurements", () => {
 		});
 		metrics.toolStarted();
 		metrics.toolStarted();
-		metrics.toolCompleted("completed", 1);
-		metrics.toolCompleted("completed", 1);
+		metrics.toolCompleted("one", "completed", 1);
+		metrics.toolCompleted("two", "completed", 1);
 		metrics.runCompleted({
 			outcome: "completed",
 			durationMs: 3_000,
@@ -165,5 +166,27 @@ describe("RunMetrics run measurements", () => {
 		expect(run?.measurements[0]?.attributes).toMatchObject({
 			outcome: "completed",
 		});
+	});
+});
+
+describe("RunMetrics skill associations", () => {
+	it("associates runs with bounded skills-tool usage", () => {
+		const { events, metrics } = createMetrics();
+		metrics.toolStarted();
+		metrics.toolCompleted(DefaultToolNames.SKILLS, "completed", 1);
+		metrics.runCompleted({ outcome: "completed", durationMs: 1 });
+
+		const run = events.find(({ name }) => name === "cline.agent.run.completed");
+		expect(run?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.run.skills_tool_calls",
+					value: 1,
+					attributes: expect.objectContaining({
+						invoked_skills_tool: true,
+					}),
+				}),
+			]),
+		);
 	});
 });
