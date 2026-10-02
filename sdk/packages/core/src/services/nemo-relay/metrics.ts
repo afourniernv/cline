@@ -18,6 +18,7 @@ type ModelOutcome =
 interface ModelMetricInput {
 	outcome: ModelOutcome;
 	durationMs: number;
+	timeToFirstEventMs?: number;
 	usage?: Partial<AgentUsage>;
 	toolCallCount: number;
 	errorClass?: ProviderErrorClass;
@@ -41,7 +42,16 @@ export class RunMetrics {
 		private readonly onFailure: (error: unknown) => void,
 	) {}
 
+	modelStarted(): void {
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", 1),
+		]);
+	}
+
 	modelCompleted(input: ModelMetricInput): void {
+		this.emit("cline.agent.model.active", [
+			upDown("cline.agent.active_model_calls", -1),
+		]);
 		const attributes = {
 			outcome: input.outcome,
 			...(input.errorClass ? { error_class: input.errorClass } : {}),
@@ -53,6 +63,14 @@ export class RunMetrics {
 			counter("cline.agent.model.calls"),
 			seconds("cline.agent.model.duration", input.durationMs),
 		];
+		if (isNonNegativeFinite(input.timeToFirstEventMs)) {
+			metrics.push(
+				seconds(
+					"cline.agent.model.time_to_first_event",
+					input.timeToFirstEventMs,
+				),
+			);
+		}
 		for (const [tokenType, value] of [
 			["input", input.usage?.inputTokens],
 			["output", input.usage?.outputTokens],
@@ -130,6 +148,14 @@ function seconds(name: string, durationMs: number): MetricSpec {
 		value: Math.max(0, durationMs) / 1_000,
 		unit: "s",
 	};
+}
+
+function upDown(name: string, value: 1 | -1): MetricSpec {
+	return { name, kind: "UpDownCounter", valueType: "I64", value };
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {
