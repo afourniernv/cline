@@ -50,6 +50,10 @@ import {
 	type SkillsExecutor,
 	type SkillsExecutorWithMetadata,
 } from "../../extensions/tools";
+import {
+	type ObservedSkillsExecutor,
+	registerObservedSkillsExecutor,
+} from "../../extensions/tools/skill-invocation";
 import type {
 	LocalRuntimeStartOptions,
 	RuntimeSessionConfig,
@@ -298,7 +302,7 @@ function createSnapshotSkillsExecutor(
 	snapshot: UserInstructionSnapshot,
 	allowedSkillNames?: ReadonlyArray<string>,
 ): SkillsExecutorWithMetadata {
-	const executor: SkillsExecutorWithMetadata = (async (skillName, args) => {
+	const executeObserved: ObservedSkillsExecutor = async (skillName, args) => {
 		const normalized = normalizeSkillToken(skillName);
 		const matches = configuredSkills(snapshot, allowedSkillNames).filter(
 			(entry) =>
@@ -307,14 +311,42 @@ function createSnapshotSkillsExecutor(
 				entry.id.endsWith(`:${normalized}`),
 		);
 		const enabled = matches.filter((entry) => !entry.disabled);
-		if (enabled.length !== 1) {
-			return enabled.length > 1
-				? `Skill "${skillName}" is ambiguous. Use one of: ${enabled.map((entry) => entry.id).join(", ")}`
-				: `Skill "${skillName}" not found.`;
+		if (enabled.length > 1) {
+			return {
+				output: `Skill "${skillName}" is ambiguous. Use one of: ${enabled.map((entry) => entry.id).join(", ")}`,
+				observation: { outcome: "ambiguous" },
+			};
+		}
+		if (enabled.length === 0) {
+			if (matches.length > 1) {
+				return {
+					output: `Skill "${skillName}" not found.`,
+					observation: { outcome: "ambiguous" },
+				};
+			}
+			return matches.length === 1
+				? {
+						output: `Skill "${skillName}" not found.`,
+						observation: { outcome: "disabled" },
+					}
+				: {
+						output: `Skill "${skillName}" not found.`,
+						observation: { outcome: "not_found" },
+					};
 		}
 		const skill = enabled[0].skill as SkillConfig;
-		return formatSkillInvocation(skill, args);
-	}) as SkillsExecutor;
+		return {
+			output: formatSkillInvocation(skill, args),
+			observation: {
+				outcome: "resolved",
+				source:
+					skill.source?.type === "agent-plugin" ? "agent_plugin" : "standalone",
+			},
+		};
+	};
+	const executor = (async (skillName, args, context) =>
+		(await executeObserved(skillName, args, context)).output) as SkillsExecutor;
+	registerObservedSkillsExecutor(executor, executeObserved);
 
 	Object.defineProperty(executor, "configuredSkills", {
 		get: () =>

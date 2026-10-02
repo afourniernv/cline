@@ -5,6 +5,12 @@ import {
 	type SkillsExecutor,
 	type SkillsExecutorWithMetadata,
 } from "../tools";
+import {
+	type ObservedSkillsExecutor,
+	registerObservedSkillsExecutor,
+	type SkillInvocationOutcome,
+	type SkillInvocationSource,
+} from "../tools/skill-invocation";
 import { listAvailableRuntimeCommandsFromWatcher } from "./runtime-commands";
 import type {
 	SkillConfig,
@@ -21,6 +27,20 @@ type SkillsExecutorMetadataItem = {
 type ConfiguredSkill = SkillsExecutorMetadataItem & {
 	skill: SkillConfig;
 };
+
+type SkillResolution =
+	| { id: string; skill: SkillConfig }
+	| {
+			outcome: Extract<
+				SkillInvocationOutcome,
+				"not_found" | "disabled" | "ambiguous"
+			>;
+			output: string;
+	  };
+
+function skillInvocationSource(skill: SkillConfig): SkillInvocationSource {
+	return skill.source?.type === "agent-plugin" ? "agent_plugin" : "standalone";
+}
 
 function escapeXmlText(value: string): string {
 	return value
@@ -133,10 +153,10 @@ function resolveSkillRecord(
 	watcher: UserInstructionConfigWatcher,
 	requestedSkill: string,
 	allowedSkillNames?: ReadonlyArray<string>,
-): { id: string; skill: SkillConfig } | { error: string } {
+): SkillResolution {
 	const normalized = normalizeSkillToken(requestedSkill);
 	if (!normalized) {
-		return { error: "Missing skill name." };
+		return { outcome: "not_found", output: "Missing skill name." };
 	}
 
 	const configuredSkills = getConfiguredSkillsFromWatcher(
@@ -148,7 +168,8 @@ function resolveSkillRecord(
 		const { skill } = exact;
 		if (skill.disabled === true) {
 			return {
-				error: `Skill "${skill.name}" is configured but disabled.`,
+				outcome: "disabled",
+				output: `Skill "${skill.name}" is configured but disabled.`,
 			};
 		}
 		return { id: exact.id, skill };
@@ -173,24 +194,28 @@ function resolveSkillRecord(
 	}
 	if (enabledSuffixMatches.length > 1) {
 		return {
-			error: `Skill "${requestedSkill}" is ambiguous. Use one of: ${enabledSuffixMatches.map(({ id }) => id).join(", ")}`,
+			outcome: "ambiguous",
+			output: `Skill "${requestedSkill}" is ambiguous. Use one of: ${enabledSuffixMatches.map(({ id }) => id).join(", ")}`,
 		};
 	}
 	if (suffixMatches.length === 1) {
 		const { skill } = suffixMatches[0];
 		return {
-			error: `Skill "${skill.name}" is configured but disabled.`,
+			outcome: "disabled",
+			output: `Skill "${skill.name}" is configured but disabled.`,
 		};
 	}
 	if (suffixMatches.length > 1) {
 		return {
-			error: `Skill "${requestedSkill}" is ambiguous, and all matches are disabled: ${suffixMatches.map(({ id }) => id).join(", ")}`,
+			outcome: "ambiguous",
+			output: `Skill "${requestedSkill}" is ambiguous, and all matches are disabled: ${suffixMatches.map(({ id }) => id).join(", ")}`,
 		};
 	}
 
 	const available = listAvailableSkillNames(watcher, allowedSkillNames);
 	return {
-		error:
+		outcome: "not_found",
+		output:
 			available.length > 0
 				? `Skill "${requestedSkill}" not found. Available skills: ${available.join(", ")}`
 				: "No skills are currently available.",
@@ -203,25 +228,38 @@ export function createUserInstructionSkillsExecutor(
 	allowedSkillNames?: ReadonlyArray<string>,
 ): SkillsExecutorWithMetadata {
 	const runningSkills = new Set<string>();
-	const executor: SkillsExecutorWithMetadata = (async (skillName, args) => {
+	const executeObserved: ObservedSkillsExecutor = async (skillName, args) => {
 		await watcherReady;
 		const resolved = resolveSkillRecord(watcher, skillName, allowedSkillNames);
-		if ("error" in resolved) {
-			return resolved.error;
+		if ("output" in resolved) {
+			return {
+				output: resolved.output,
+				observation: { outcome: resolved.outcome },
+			};
 		}
 
 		const { id, skill } = resolved;
+		const source = skillInvocationSource(skill);
 		if (runningSkills.has(id)) {
-			return `Skill "${skill.name}" is already running.`;
+			return {
+				output: `Skill "${skill.name}" is already running.`,
+				observation: { outcome: "already_running", source },
+			};
 		}
 
 		runningSkills.add(id);
 		try {
-			return formatSkillInvocation(skill, args);
+			return {
+				output: formatSkillInvocation(skill, args),
+				observation: { outcome: "resolved", source },
+			};
 		} finally {
 			runningSkills.delete(id);
 		}
-	}) as SkillsExecutor;
+	};
+	const executor = (async (skillName, args, context) =>
+		(await executeObserved(skillName, args, context)).output) as SkillsExecutor;
+	registerObservedSkillsExecutor(executor, executeObserved);
 
 	Object.defineProperty(executor, "configuredSkills", {
 		get: () =>

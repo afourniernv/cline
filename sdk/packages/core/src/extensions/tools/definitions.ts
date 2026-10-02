@@ -58,6 +58,11 @@ import {
 	type SubmitInput,
 	SubmitInputSchema,
 } from "./schemas";
+import {
+	executeSkillsWithObservation,
+	registerObservedSkillsTool,
+	type SkillInvocationObservation,
+} from "./skill-invocation";
 import type {
 	ApplyPatchExecutor,
 	AskQuestionExecutor,
@@ -763,6 +768,18 @@ export function createSkillsTool(
 	config: Pick<DefaultToolsConfig, "skillsTimeoutMs"> = {},
 ): AgentTool<SkillsInput, string> {
 	const timeoutMs = config.skillsTimeoutMs ?? 15000;
+	const observations = new WeakMap<
+		AgentToolContext,
+		SkillInvocationObservation[]
+	>();
+	const recordObservation = (
+		context: AgentToolContext,
+		observation: SkillInvocationObservation,
+	) => {
+		const pending = observations.get(context);
+		if (pending) pending.push(observation);
+		else observations.set(context, [observation]);
+	};
 
 	const baseDescription =
 		"Execute a skill within the main conversation. " +
@@ -780,18 +797,34 @@ export function createSkillsTool(
 		retryable: false,
 		maxRetries: 0,
 		execute: async (input, context) => {
-			const validatedInput = validateWithZod(SkillsInputSchema, input);
-			return withTimeout(
-				executor(
-					validatedInput.skill,
-					validatedInput.args || undefined,
-					context,
-				),
-				timeoutMs,
-				`Skills operation timed out after ${timeoutMs}ms`,
-			);
+			try {
+				const validatedInput = validateWithZod(SkillsInputSchema, input);
+				const result = await withTimeout(
+					executeSkillsWithObservation(
+						executor,
+						validatedInput.skill,
+						validatedInput.args || undefined,
+						context,
+					),
+					timeoutMs,
+					`Skills operation timed out after ${timeoutMs}ms`,
+				);
+				if (result.observation) {
+					recordObservation(context, result.observation);
+				}
+				return result.output;
+			} catch (error) {
+				recordObservation(context, { outcome: "failed" });
+				throw error;
+			}
 		},
 	});
+
+	registerObservedSkillsTool(
+		tool,
+		() => executor.configuredSkills?.filter((skill) => !skill.disabled).length,
+		observations,
+	);
 
 	Object.defineProperty(tool, "description", {
 		get() {

@@ -6,6 +6,11 @@ import type {
 } from "@cline/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
+	createSkillsTool,
+	type SkillsExecutorWithMetadata,
+} from "../../extensions/tools";
+import { registerObservedSkillsExecutor } from "../../extensions/tools/skill-invocation";
+import {
 	type NemoRelayRunInstrumentation,
 	NemoRelayRuntimeManager,
 } from "./runtime";
@@ -96,6 +101,16 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.model.completed",
 		);
+		const modelCompleted = harness.metrics.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(modelCompleted?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.model.time_to_first_event",
+				}),
+			]),
+		);
 		expect(harness.metrics.map(({ name }) => name)).toContain(
 			"cline.agent.tool.completed",
 		);
@@ -149,6 +164,86 @@ describe("NemoRelay runtime instrumentation", () => {
 		expect(JSON.stringify(harness.metrics)).not.toContain("private-tool-name");
 	});
 
+	it("records typed skill resolution without metric identity labels", async () => {
+		const harness = createRelayHarness({ configured: true });
+		const skillName = "private-skill-name";
+		const failingSkillName = "private-failing-skill";
+		const failureCanary = "PRIVATE_SKILL_FAILURE";
+		const executor = Object.assign(async () => "fallback", {
+			configuredSkills: [
+				{ id: skillName, name: skillName, disabled: false },
+				{ id: failingSkillName, name: failingSkillName, disabled: false },
+			],
+		}) as SkillsExecutorWithMetadata;
+		registerObservedSkillsExecutor(executor, async (requestedSkill) => {
+			if (requestedSkill === failingSkillName) {
+				throw new Error(failureCanary);
+			}
+			return {
+				output: "loaded instructions",
+				observation: { outcome: "resolved", source: "standalone" },
+			};
+		});
+
+		await observeWithHarness(harness, async (instrumentation) => {
+			if (!instrumentation) throw new Error("expected Relay instrumentation");
+			const [tool] = instrumentation.wrapTools([
+				createSkillsTool(executor) as unknown as AgentTool,
+			]);
+			const sharedContext = {
+				agentId: "agent",
+				iteration: 1,
+				toolCallId: "shared-skill-call",
+			};
+			const [resolved, failed] = await Promise.allSettled([
+				tool.execute({ skill: skillName }, sharedContext),
+				tool.execute({ skill: failingSkillName }, sharedContext),
+			]);
+			expect(resolved).toMatchObject({ status: "fulfilled" });
+			expect(failed).toMatchObject({
+				status: "rejected",
+				reason: expect.objectContaining({ message: failureCanary }),
+			});
+			return agentResult();
+		});
+
+		const invocations = harness.metrics.filter(
+			({ name }) => name === "cline.agent.skill.invocation",
+		);
+		expect(invocations).toHaveLength(2);
+		expect(invocations[0]?.measurements[0]).toMatchObject({
+			name: "cline.agent.skill.invocations",
+			attributes: {
+				outcome: "resolved",
+				skill_source: "standalone",
+			},
+		});
+		expect(invocations[1]?.measurements[0]).toMatchObject({
+			attributes: { outcome: "failed" },
+		});
+		const run = harness.metrics.find(
+			({ name }) => name === "cline.agent.run.completed",
+		);
+		expect(run?.measurements).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.run.available_skills",
+					value: 2,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_resolved",
+					value: 1,
+				}),
+				expect.objectContaining({
+					name: "cline.agent.run.skills_unresolved",
+					value: 1,
+				}),
+			]),
+		);
+		expect(JSON.stringify(harness.metrics)).not.toContain(skillName);
+		expect(JSON.stringify(harness.metrics)).not.toContain(failureCanary);
+	});
+
 	it("closes concurrent model streams once when they finish out of order", async () => {
 		const harness = createRelayHarness({ configured: true });
 		let releaseSlow!: () => void;
@@ -198,6 +293,36 @@ describe("NemoRelay runtime instrumentation", () => {
 
 		expect([fastClosed, slowClosed]).toEqual([1, 1]);
 		expect(harness.llmEnds).toHaveLength(2);
+		expect(
+			harness.metrics
+				.filter(({ name }) => name === "cline.agent.model.active")
+				.flatMap(({ measurements }) =>
+					(measurements as Array<{ value: number }>).map(({ value }) => value),
+				),
+		).toEqual([1, 1, -1, -1]);
+	});
+
+	it("omits first-event latency for an empty model stream", async () => {
+		const harness = createRelayHarness({ configured: true });
+
+		await observeWithHarness(harness, async (instrumentation) => {
+			if (!instrumentation) throw new Error("expected Relay instrumentation");
+			await drainModel(
+				instrumentation.wrapModel({ async *stream() {} }, "provider", "empty"),
+			);
+			return agentResult();
+		});
+
+		const completed = harness.metrics.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(completed?.measurements).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "cline.agent.model.time_to_first_event",
+				}),
+			]),
+		);
 	});
 
 	it("bounds tool names and call IDs without changing the executed tool", async () => {
