@@ -6,6 +6,88 @@ Cached text excludes native image data. Cache admission uses the persisted JSON/
 Tools created with `createTool` may set `resultPolicy: "cache-oversized"`. Core enables this for MCP and Composio tools. Original output remains in history and events; synchronous model preparation sends a bounded preview with a `cline://cache/<encoded-session-id>/<result-id>.result.txt` URI for cached oversized responses. Use `read_files` with `start_line`/`end_line` to read omitted content. Shell and filesystem search tools do not support these URIs. The stateless agent runtime does not own a cache.
 
 Entries expire after five further model iterations without a cache read, across follow-up turns. Explicit reads refresh expiry; model requests do not. A 16 MiB UTF-8 text limit per session evicts least recently read entries; individually larger results have no recovery URI. Shutdown, history reset, and restore clear the cache, and resume does not regenerate entries. Missing reads instruct the agent to refetch with an appropriate read/query tool without repeating side-effecting actions. Evicting cached text does not remove original conversation output or change earlier recovery notices; URI references remain until the cache is cleared. Cache-miss feedback appears only when an agent attempts to read missing content.
+## Experimental NeMo Relay observability
+
+Install `nemo-relay-node@0.9.3` alongside `@cline/core`. Relay automatically
+discovers its user and system `plugins.toml` files. To select another file, set
+`CLINE_NEMO_RELAY_PLUGINS_TOML=/absolute/path/plugins.toml` before starting the
+Cline process. The selected file replaces the user file; the system file still
+applies above it.
+
+Cline's packaged CLI, VS Code extension, Desktop app, and remote helpers do not
+yet stage the native Relay library. Relay 0.9.3 also requires Node 24 and does
+not publish a macOS x64 Node artifact, so those packaging paths remain
+unqualified.
+
+The observation-only integration records:
+
+- one `cline.run` scope for each initial run or continuation;
+- bounded, normalized model requests and streamed outcomes;
+- tool callback inputs and results after Cline policy and approval; and
+- run, model, tool, and observation-coverage measurements.
+
+Model data is a partial Cline projection, not a provider-wire request. Tool data
+does not include denied calls, incremental updates, provider-owned tools, or
+nested work inside an MCP server. Thrown tool errors include a bounded error
+type, not the message. A marked child inherits parentage only when it starts in
+the active Relay context; detached or queued work has no guaranteed parentage.
+
+Relay receives copies: sanitizers cannot change Cline's provider request or
+tool callback. Copies are bounded but not automatically PII-safe. Prompts,
+payloads, `data.cwd`, session metadata, provider/model IDs, and tool names may
+still be sensitive, so configure sanitization before export. Cline blocks runs
+when the active configuration contains execution middleware this observation
+boundary cannot enforce.
+
+The integration emits these measurements:
+
+- `cline.agent.runs`, `cline.agent.run.duration`,
+  `cline.agent.run.iterations`, `cline.agent.run.model_attempts`,
+  `cline.agent.run.peak_active_tools`, and
+  `cline.agent.run.skills_tool_calls`
+- `cline.agent.model.calls`, `cline.agent.model.duration`,
+  `cline.agent.model.tokens`, `cline.agent.model.cost`, and
+  `cline.agent.model.tool_calls`
+- `cline.agent.tool.executions`, `cline.agent.tool.duration`, and
+  `cline.agent.active_tools`
+- `cline.agent.observation.omissions`
+
+Labels are limited to bounded outcome, surface, mode, agent kind, token type,
+error class, retryability, omission reason, and `invoked_skills_tool`. Provider,
+model, tool, path, session, and payload values are not metric labels.
+`cline.agent.observation.omissions` uses `operation` and `reason` to identify
+partial projection. `active_tools` counts approved Cline callbacks, not active
+sandboxes. Skill measurements show association only; they do not prove a skill
+loaded or caused the outcome. Cost is Cline's estimate, not a billing record.
+
+The final owner drains accepted runs, flushes subscribers, and closes Relay,
+with a five-second bound for each stage. Missing or unsupported Relay is
+fail-open only when no explicit file was selected. Explicit-configuration,
+initialization, inspection, ownership, and unsupported-policy failures block
+runs. Hosts must await `dispose()` or `close()`; abrupt exit cannot guarantee
+delivery.
+
+Example file exporter:
+
+```toml
+version = 1
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "./cline-relay"
+filename = "events.jsonl"
+mode = "append"
+```
 
 ## Shared agent review UI
 

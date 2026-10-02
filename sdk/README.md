@@ -42,6 +42,11 @@ That's it. The agent streams its response, calls tools if you give it any, and r
 npm install @cline/sdk
 ```
 
+Hosts using `@cline/core` can optionally install `nemo-relay-node@0.9.3` for
+experimental in-process observability. Relay discovers configured plugins at
+host initialization; see [NeMo Relay observability](./DOC.md#experimental-nemo-relay-observability)
+for support boundaries and exporter setup.
+
 ## SDK Skill
 
 If you use a coding agent (Claude Code, Codex, Cline, etc.), install the [Cline SDK skill](https://github.com/cline/sdk-skill) to give your agent context on the SDK's APIs and best practices to help you build with the Cline SDK.
