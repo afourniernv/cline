@@ -6,6 +6,7 @@ import type {
 	RelayModule,
 	RelayScopeHandle,
 } from "./contracts";
+import type { ObservationOmissionReason } from "./projection";
 
 type ModelOutcome =
 	| "completed"
@@ -107,6 +108,17 @@ export class RunMetrics {
 				seconds("cline.agent.tool.duration", durationMs),
 			],
 			{ outcome },
+		);
+	}
+
+	omission(
+		operation: "model" | "tool",
+		reason: ObservationOmissionReason,
+	): void {
+		this.emit(
+			"cline.agent.observation.omitted",
+			[counter("cline.agent.observation.omissions")],
+			{ operation, reason },
 		);
 	}
 

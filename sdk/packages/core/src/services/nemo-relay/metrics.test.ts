@@ -110,3 +110,23 @@ describe("RunMetrics tool measurements", () => {
 		).toMatchObject({ outcome: "failed" });
 	});
 });
+
+describe("RunMetrics coverage measurements", () => {
+	it("records bounded omission dimensions", () => {
+		const { events, metrics } = createMetrics();
+		metrics.omission("tool", "payload_truncated");
+		expect(events[0]).toMatchObject({
+			name: "cline.agent.observation.omitted",
+			measurements: [
+				{
+					name: "cline.agent.observation.omissions",
+					value: 1,
+					attributes: {
+						operation: "tool",
+						reason: "payload_truncated",
+					},
+				},
+			],
+		});
+	});
+});

@@ -176,6 +176,9 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		} catch (error) {
 			this.logFailure("start model observation", error);
 		}
+		if (projectedRequest.omissionReason) {
+			this.metrics.omission("model", projectedRequest.omissionReason);
+		}
 		let text = "";
 		let reasoning = "";
 		let redactedReasoning = false;
@@ -190,6 +193,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		const outputOmissions = new Set<ObservationOmissionReason>();
 		const recordOutputOmission = (reason: ObservationOmissionReason) => {
 			outputOmissions.add(reason);
+			this.metrics.omission("model", reason);
 		};
 		let completed = false;
 		let failed = false;
@@ -370,6 +374,9 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		} catch (error) {
 			this.logFailure("start tool observation", error);
 		}
+		if (projectedInput.omissionReason) {
+			this.metrics.omission("tool", projectedInput.omissionReason);
+		}
 		let outcome: "completed" | "failed" = "completed";
 		let output: unknown;
 		let executionFailed = false;
@@ -409,6 +416,9 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 
 		if (handle) {
 			const projectedOutput = projectJson(output);
+			if (projectedOutput.omissionReason) {
+				this.metrics.omission("tool", projectedOutput.omissionReason);
+			}
 			try {
 				this.relay.toolCallEnd(
 					handle,
