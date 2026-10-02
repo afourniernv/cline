@@ -13,6 +13,7 @@ import type {
 	RelayModule,
 	RelayScopeHandle,
 } from "./contracts";
+import type { RunMetrics } from "./metrics";
 import {
 	boundedMetadataId,
 	boundedText,
@@ -107,6 +108,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 	constructor(
 		private readonly relay: RelayModule,
 		private readonly parent: RelayScopeHandle,
+		private readonly metrics: RunMetrics,
 		private readonly logger?: BasicLogger,
 	) {}
 
@@ -191,6 +193,7 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 		};
 		let completed = false;
 		let failed = false;
+		const startedAt = performance.now();
 		try {
 			const stream = await model.stream(request);
 			for await (const event of stream) {
@@ -283,6 +286,14 @@ export class RunInstrumentation implements NemoRelayRunInstrumentation {
 				outcome === "failed" && typeof errorRetryable === "boolean"
 					? errorRetryable
 					: undefined;
+			this.metrics.modelCompleted({
+				outcome,
+				durationMs: performance.now() - startedAt,
+				usage,
+				toolCallCount: toolCallIds.size,
+				errorClass: boundedErrorClass,
+				errorRetryable: boundedErrorRetryable,
+			});
 			if (handle) {
 				try {
 					const projectedResponse = projectJson({

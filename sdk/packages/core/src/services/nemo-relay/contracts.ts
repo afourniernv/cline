@@ -6,6 +6,15 @@ import type {
 } from "@cline/shared";
 import type { BuiltinSessionSource } from "../../types/common";
 
+export interface RelayMeasurement {
+	name: string;
+	kind: number;
+	valueType: number;
+	value: number;
+	unit?: string;
+	attributes?: Record<string, RelayJson>;
+}
+
 /**
  * The small Relay surface Cline consumes. Keep this structural so installing
  * @cline/core without its optional native Relay dependency still leaves a
@@ -18,6 +27,8 @@ type RelayPropagationContext = object;
 
 export interface RelayModule {
 	ScopeType: { Agent: number };
+	MetricKind: { Counter: number; Histogram: number };
+	MetricValueType: { U64: number; F64: number };
 	scopeStackActive(): boolean;
 	capturePropagationContext(): RelayPropagationContext;
 	createScopeStack(): RelayScopeStack;
@@ -40,6 +51,13 @@ export interface RelayModule {
 		output?: RelayJson | null,
 		timestamp?: number | null,
 		metadata?: RelayJson | null,
+	): void;
+	metric(
+		name: string,
+		measurements: RelayMeasurement[],
+		handle?: RelayScopeHandle | null,
+		metadata?: RelayJson | null,
+		timestamp?: number | null,
 	): void;
 	llmCall(
 		name: string,
