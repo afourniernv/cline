@@ -19,7 +19,7 @@ export interface SkillInvocationObservation {
 
 export interface ObservedSkillInvocation {
 	output: string;
-	observation?: SkillInvocationObservation;
+	observation: SkillInvocationObservation;
 }
 
 export type ObservedSkillsExecutor = (
