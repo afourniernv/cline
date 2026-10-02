@@ -822,9 +822,7 @@ export function createSkillsTool(
 					timeoutMs,
 					`Skills operation timed out after ${timeoutMs}ms`,
 				);
-				if (result.observation) {
-					recordObservation(context, result.observation);
-				}
+				recordObservation(context, result.observation);
 				return result.output;
 			} catch (error) {
 				recordObservation(context, { outcome: "failed" });
