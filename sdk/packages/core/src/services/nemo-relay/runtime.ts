@@ -483,6 +483,7 @@ export class NemoRelayRuntimeManager {
 			});
 		});
 		const startedAt = performance.now();
+		metrics.runStarted();
 
 		let result: T | undefined;
 		let threw = false;
