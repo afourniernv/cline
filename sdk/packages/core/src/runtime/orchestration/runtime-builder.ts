@@ -318,6 +318,11 @@ function shutdownTeamRuntime(
 	if (!teamRuntime) {
 		return;
 	}
+	try {
+		teamRuntime.cancelOutstandingWork(reason);
+	} catch {
+		// Continue shutting down active teammates.
+	}
 	for (const teammateId of teamRuntime.getTeammateIds()) {
 		try {
 			teamRuntime.shutdownTeammate(teammateId, reason);

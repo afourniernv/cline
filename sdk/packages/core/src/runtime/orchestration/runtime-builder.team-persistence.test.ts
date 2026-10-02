@@ -52,7 +52,8 @@ class MockAgentTeamsRuntime {
 	}));
 	markStaleRunsInterrupted = vi.fn();
 	recoverActiveRuns = vi.fn();
-	getTeammateIds = vi.fn(() => []);
+	cancelOutstandingWork = vi.fn();
+	getTeammateIds = vi.fn<() => string[]>(() => []);
 	shutdownTeammate = vi.fn();
 }
 
@@ -134,7 +135,7 @@ describe("DefaultRuntimeBuilder team persistence boundary", () => {
 		const { DefaultRuntimeBuilder } = await import("./runtime-builder");
 		const onTeamRestored = vi.fn();
 
-		await new DefaultRuntimeBuilder().build({
+		const runtime = await new DefaultRuntimeBuilder().build({
 			config: {
 				providerId: "anthropic",
 				modelId: "claude-sonnet-4-6",
@@ -266,13 +267,28 @@ describe("DefaultRuntimeBuilder team persistence boundary", () => {
 				]),
 			}),
 		);
+
+		runtimeInstance.getTeammateIds.mockReturnValue(["python-poet"]);
+		await runtime.shutdown("session_stop");
+		expect(runtimeInstance.cancelOutstandingWork).toHaveBeenCalledWith(
+			"session_stop",
+		);
+		expect(runtimeInstance.shutdownTeammate).toHaveBeenCalledWith(
+			"python-poet",
+			"session_stop",
+		);
+		expect(
+			runtimeInstance.cancelOutstandingWork.mock.invocationCallOrder[0],
+		).toBeLessThan(
+			runtimeInstance.shutdownTeammate.mock.invocationCallOrder[0] ?? Infinity,
+		);
 	});
 
 	it("forwards cline workspace metadata to teammate runtime bootstrap config", async () => {
 		const { DefaultRuntimeBuilder } = await import("./runtime-builder");
 		bootstrapAgentTeamsMock.mockClear();
 
-		await new DefaultRuntimeBuilder().build({
+		const runtime = await new DefaultRuntimeBuilder().build({
 			config: {
 				providerId: "cline",
 				modelId: "anthropic/claude-sonnet-4.6",
@@ -314,5 +330,6 @@ describe("DefaultRuntimeBuilder team persistence boundary", () => {
 				cwd: "/repo/demo",
 			}),
 		);
+		await runtime.shutdown("test");
 	});
 });
