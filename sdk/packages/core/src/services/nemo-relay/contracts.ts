@@ -27,8 +27,8 @@ type RelayPropagationContext = object;
 
 export interface RelayModule {
 	ScopeType: { Agent: number };
-	MetricKind: { Counter: number; Histogram: number };
-	MetricValueType: { U64: number; F64: number };
+	MetricKind: { Counter: number; UpDownCounter: number; Histogram: number };
+	MetricValueType: { U64: number; I64: number; F64: number };
 	scopeStackActive(): boolean;
 	capturePropagationContext(): RelayPropagationContext;
 	createScopeStack(): RelayScopeStack;

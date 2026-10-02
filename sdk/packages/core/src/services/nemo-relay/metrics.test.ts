@@ -26,9 +26,11 @@ function createMetrics() {
 describe("RunMetrics model measurements", () => {
 	it("emits bounded reliability and usage dimensions", () => {
 		const { events, metrics } = createMetrics();
+		metrics.modelStarted();
 		metrics.modelCompleted({
 			outcome: "failed",
 			durationMs: 1_500,
+			timeToFirstEventMs: 250,
 			usage: {
 				inputTokens: 3,
 				outputTokens: 2,
@@ -41,11 +43,14 @@ describe("RunMetrics model measurements", () => {
 			errorRetryable: false,
 		});
 
-		const [completed] = events;
+		const completed = events.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
 		expect(completed?.name).toBe("cline.agent.model.completed");
 		expect(completed?.measurements.map(({ name }) => name)).toEqual([
 			"cline.agent.model.calls",
 			"cline.agent.model.duration",
+			"cline.agent.model.time_to_first_event",
 			"cline.agent.model.tokens",
 			"cline.agent.model.tokens",
 			"cline.agent.model.tokens",
@@ -59,6 +64,11 @@ describe("RunMetrics model measurements", () => {
 			error_class: "auth",
 			error_retryable: false,
 		});
+		expect(
+			events
+				.filter(({ name }) => name === "cline.agent.model.active")
+				.flatMap(({ measurements }) => measurements.map(({ value }) => value)),
+		).toEqual([1, -1]);
 	});
 
 	it("omits invalid counters", () => {
@@ -69,7 +79,10 @@ describe("RunMetrics model measurements", () => {
 			usage: { inputTokens: Number.NaN, outputTokens: -1, totalCost: -0.1 },
 			toolCallCount: Number.MAX_SAFE_INTEGER + 1,
 		});
-		expect(events[0]?.measurements.map(({ name }) => name)).toEqual([
+		const completed = events.find(
+			({ name }) => name === "cline.agent.model.completed",
+		);
+		expect(completed?.measurements.map(({ name }) => name)).toEqual([
 			"cline.agent.model.calls",
 			"cline.agent.model.duration",
 		]);
@@ -87,6 +100,6 @@ describe("RunMetrics model measurements", () => {
 				toolCallCount: 0,
 			}),
 		).not.toThrow();
-		expect(onFailure).toHaveBeenCalledOnce();
+		expect(onFailure).toHaveBeenCalledTimes(2);
 	});
 });
