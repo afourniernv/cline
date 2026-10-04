@@ -120,13 +120,13 @@ function blockingRuntimeMessage(
 	return "The selected NeMo Relay configuration could not be activated";
 }
 
-const importOptional = (specifier: string): Promise<unknown> =>
+const importRelayModule = (specifier: string): Promise<unknown> =>
 	import(specifier);
 
 function defaultRelayLoader(): Promise<RelayModules> {
 	return Promise.all([
-		importOptional("nemo-relay-node"),
-		importOptional("nemo-relay-node/plugin"),
+		importRelayModule("nemo-relay-node"),
+		importRelayModule("nemo-relay-node/plugin"),
 	]).then(([relay, plugin]) => ({
 		relay: relay as unknown as RelayModule,
 		plugin: plugin as unknown as RelayPluginModule,
