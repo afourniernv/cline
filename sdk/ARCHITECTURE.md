@@ -174,13 +174,15 @@ teardown branch a stop routes through. Each session emits at most one
 `task.completed`. See `DOC.md` for the event payload and `source`
 field.
 
-### Optional NeMo Relay observability
+### NeMo Relay observability
 
-`@cline/core` can load optional `nemo-relay-node` in the process that executes
-model and tool callbacks. Runtime owners share one reference-counted plugin
-activation, while each run receives an isolated Relay scope stack. A marked
-child inherits parentage only when it starts inside the active Relay context;
-detached or queued work has no guaranteed Relay parentage.
+`@cline/core` includes `nemo-relay-node` and initializes it in the process that
+executes model and tool callbacks. An empty Relay configuration is a no-op;
+configured user and system plugins are discovered automatically. Runtime owners
+share one reference-counted plugin activation, while each run receives an
+isolated Relay scope stack. A marked child inherits parentage only when it starts
+inside the active Relay context; detached or queued work has no guaranteed Relay
+parentage.
 
 Cline uses Relay's manual lifecycle APIs to observe bounded copies of normalized
 model traffic and post-approval tool calls. Sanitizers may change exported
@@ -188,8 +190,8 @@ copies but not Cline's provider or tool payloads. Cline rejects configurations
 containing execution middleware this observation-only boundary cannot enforce.
 
 The final owner stops admission, drains accepted runs, flushes subscribers, and
-closes the activation, with a five-second bound per stage. Missing Relay is
-fail-open only when no explicit configuration was selected. Explicit
+closes the activation, with a five-second bound per stage. An unavailable native
+binding is fail-open only when no explicit configuration was selected. Explicit
 configuration, initialization, inspection, ownership, and unsupported-policy
 failures block runs.
 
