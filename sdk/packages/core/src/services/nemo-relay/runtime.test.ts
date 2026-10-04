@@ -126,7 +126,7 @@ describe("NemoRelayRuntimeManager", () => {
 	it.each([
 		"Cannot find module 'nemo-relay-node-darwin-x64' from index.js",
 		"Unsupported OS: freebsd, architecture: x64",
-	])("keeps an unavailable Relay platform optional: %s", async (message) => {
+	])("continues without Relay on an unsupported native platform: %s", async (message) => {
 		const manager = new NemoRelayRuntimeManager({
 			load: async () => {
 				throw new Error(message);
