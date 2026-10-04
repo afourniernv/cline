@@ -6,18 +6,23 @@ Cached text excludes native image data. Cache admission uses the persisted JSON/
 Tools created with `createTool` may set `resultPolicy: "cache-oversized"`. Core enables this for MCP and Composio tools. Original output remains in history and events; synchronous model preparation sends a bounded preview with a `cline://cache/<encoded-session-id>/<result-id>.result.txt` URI for cached oversized responses. Use `read_files` with `start_line`/`end_line` to read omitted content. Shell and filesystem search tools do not support these URIs. The stateless agent runtime does not own a cache.
 
 Entries expire after five further model iterations without a cache read, across follow-up turns. Explicit reads refresh expiry; model requests do not. A 16 MiB UTF-8 text limit per session evicts least recently read entries; individually larger results have no recovery URI. Shutdown, history reset, and restore clear the cache, and resume does not regenerate entries. Missing reads instruct the agent to refetch with an appropriate read/query tool without repeating side-effecting actions. Evicting cached text does not remove original conversation output or change earlier recovery notices; URI references remain until the cache is cleared. Cache-miss feedback appears only when an agent attempts to read missing content.
-## Experimental NeMo Relay observability
 
-Install `nemo-relay-node@0.9.3` alongside `@cline/core`. Relay automatically
-discovers its user and system `plugins.toml` files. To select another file, set
+## NeMo Relay observability
+
+`@cline/core` declares `nemo-relay-node@0.9.3` as an optional dependency.
+Standard installs include it automatically on supported runtimes; no separate
+package or feature flag is required. Cline's default local runtime initializes
+Relay when local execution begins, and Relay discovers its user and system
+`plugins.toml` files. With no enabled components or selected dynamic plugins,
+Cline creates no Relay run scopes or metrics. To select another file, set
 `CLINE_NEMO_RELAY_PLUGINS_TOML=/absolute/path/plugins.toml` before starting the
 Cline process. The selected file replaces the user file; the system file still
 applies above it.
 
-Cline's packaged CLI, VS Code extension, Desktop app, and remote helpers do not
-yet stage the native Relay library. Relay 0.9.3 also requires Node 24 and does
-not publish a macOS x64 Node artifact, so those packaging paths remain
-unqualified.
+Cline's packaged CLI, VS Code extension, Desktop app, and prebuilt remote-helper
+binaries do not yet stage the native Relay library. Relay 0.9.3 also requires
+Node 24 and does not publish a macOS x64 Node artifact, so those packaging paths
+remain unqualified.
 
 The observation-only integration records:
 
@@ -83,7 +88,7 @@ show association only; they do not prove that a skill caused the run outcome.
 Cost is Cline's estimate, not a billing record.
 
 The final owner drains accepted runs, flushes subscribers, and closes Relay,
-with a five-second bound for each stage. Missing or unsupported Relay is
+with a five-second bound for each stage. An unavailable native binding is
 fail-open only when no explicit file was selected. Explicit-configuration,
 initialization, inspection, ownership, and unsupported-policy failures block
 runs. Hosts must await `dispose()` or `close()`; abrupt exit cannot guarantee

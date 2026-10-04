@@ -176,13 +176,15 @@ field.
 
 ### NeMo Relay observability
 
-`@cline/core` includes `nemo-relay-node` and initializes it in the process that
-executes model and tool callbacks. An empty Relay configuration is a no-op;
-configured user and system plugins are discovered automatically. Runtime owners
-share one reference-counted plugin activation, while each run receives an
-isolated Relay scope stack. A marked child inherits parentage only when it starts
-inside the active Relay context; detached or queued work has no guaranteed Relay
-parentage.
+`@cline/core` declares `nemo-relay-node` as an optional dependency, which standard
+installs include automatically on supported runtimes. The default local runtime
+initializes it in the process that executes model and tool callbacks. Configured
+user and system plugins are discovered automatically. With no enabled components
+or selected dynamic plugins, Cline creates no Relay run scopes or metrics, but it
+still retains the process-wide Relay activation. Runtime owners share that
+reference-counted activation, while each run receives an isolated Relay scope
+stack. A marked child inherits parentage only when it starts inside the active
+Relay context; detached or queued work has no guaranteed Relay parentage.
 
 Cline uses Relay's manual lifecycle APIs to observe bounded copies of normalized
 model traffic and post-approval tool calls. Sanitizers may change exported
