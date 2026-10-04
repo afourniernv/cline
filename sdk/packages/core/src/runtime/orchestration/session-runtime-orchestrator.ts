@@ -316,7 +316,7 @@ interface SessionRunInput {
 export interface SessionRuntimeOrchestratorDeps {
 	readonly logger?: BasicLogger;
 	readonly telemetry?: ITelemetryService;
-	/** Optional process-owned NeMo Relay observer supplied by the execution host. */
+	/** Process-owned NeMo Relay observer override supplied by the execution host. */
 	readonly nemoRelay?: NemoRelayRunObserver;
 	/** Host-resolved execution context when the session has transport provenance. */
 	readonly nemoRelayRunContext?: NemoRelayRunContext;

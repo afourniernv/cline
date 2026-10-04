@@ -7,9 +7,8 @@ import type {
 import type { BuiltinSessionSource } from "../../types/common";
 
 /**
- * The small Relay surface Cline consumes. Keep this structural so installing
- * @cline/core without its optional native Relay dependency still leaves a
- * resolvable public declaration graph.
+ * The small Relay surface Cline consumes. Keep this structural so Relay's
+ * implementation types do not leak through @cline/core's public declarations.
  */
 export type RelayScopeHandle = object;
 type RelayCallHandle = object;
