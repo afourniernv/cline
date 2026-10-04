@@ -676,17 +676,17 @@
         "yaml": "^2.8.2",
         "zod": "^4.3.6",
       },
+      "optionalDependencies": {
+        "nemo-relay-node": "0.9.3",
+      },
       "devDependencies": {
         "@types/ws": "^8.18.1",
-        "nemo-relay-node": "0.9.3",
         "posthog-node": "^5.8.0",
       },
       "peerDependencies": {
-        "nemo-relay-node": "0.9.3",
         "posthog-node": "^5.8.0",
       },
       "optionalPeers": [
-        "nemo-relay-node",
         "posthog-node",
       ],
     },
