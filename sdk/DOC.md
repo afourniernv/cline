@@ -60,7 +60,7 @@ Entries expire after five further model iterations without a cache read, across 
 
 ## NeMo Relay observability
 
-`@cline/core` declares `nemo-relay-node@0.9.3` as an optional dependency.
+`@cline/core` declares `nemo-relay-node@0.11.1` as an optional dependency.
 Standard installs include it automatically on supported runtimes; no separate
 package or feature flag is required. Cline's default local runtime initializes
 Relay when local execution begins, and Relay discovers its user and system
@@ -71,9 +71,9 @@ Cline process. The selected file replaces the user file; the system file still
 applies above it.
 
 Cline's packaged CLI, VS Code extension, Desktop app, and prebuilt remote-helper
-binaries do not yet stage the native Relay library. Relay 0.9.3 also requires
-Node 24 and does not publish a macOS x64 Node artifact, so those packaging paths
-remain unqualified.
+binaries do not yet stage the native Relay library. Relay 0.11.1 requires
+Node 24.13.1 or later and does not publish a macOS x64 Node artifact, so those
+packaging paths remain unqualified.
 
 The observation-only integration records:
 

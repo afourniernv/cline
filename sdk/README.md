@@ -42,7 +42,7 @@ That's it. The agent streams its response, calls tools if you give it any, and r
 npm install @cline/sdk
 ```
 
-`@cline/core` declares `nemo-relay-node@0.9.3` as an optional dependency for
+`@cline/core` declares `nemo-relay-node@0.11.1` as an optional dependency for
 in-process observability. Standard installs include it automatically on
 supported runtimes; no separate installation or feature flag is required.
 Cline's default local runtime discovers configured plugins when execution
